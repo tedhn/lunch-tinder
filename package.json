@@ -18,7 +18,10 @@
 		"postinstall": "prisma generate",
 		"preview": "next build && next start",
 		"start": "next start",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"video:studio": "remotion studio video/index.ts",
+		"video:render": "remotion render video/index.ts LunchTinder out/lunch-tinder.mp4",
+		"video:still": "remotion still video/index.ts LunchTinder out/still.png"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.7.0",
@@ -48,12 +51,14 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.5",
+		"@remotion/cli": "^4.0.509",
 		"@tailwindcss/postcss": "^4.0.15",
 		"@types/node": "^20.14.10",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
 		"postcss": "^8.5.3",
 		"prisma": "^6.6.0",
+		"remotion": "^4.0.509",
 		"tailwindcss": "^4.0.15",
 		"typescript": "^5.8.2"
 	},

@@ -94,13 +94,24 @@ would trigger a refetch, which would heartbeat again.
   same member instead of becoming a second ghost in the list.
 - **Deck order** is shuffled once at room creation and frozen into
   `room.deck_ids`, so "3 of 5 finished" refers to the same cards for everyone.
-- **Anyone can start, reveal or reset.** `host_id` is only a lobby badge. With
-  three people and one lunch hour, a host whose phone died stranding everyone
-  else is the worse failure.
-- **Results auto-reveal** the moment the last member finishes the deck.
-- **Swipes are idempotent** per (room, member, card), so a double-tap or a
-  retried request cannot inflate a tally. Re-swiping the same card updates the
-  verdict rather than adding a second vote.
+- **There is no lobby.** A room opens straight into swiping and a joiner starts
+  on their own. A screen whose only content is "waiting for others" is where
+  somebody gives up and suggests the usual place.
+- **A round ends two ways**: `room.voting_ends_at` passes (`ROUND_MINUTES`,
+  ten by default), or the host counts the votes early. Finishing the deck ends
+  nothing — that is what lets a latecomer still vote, and what stops the room
+  being cut short by whoever swipes fastest. No cron: whichever client reads the
+  room next closes an expired one.
+- **Counting early is the host's alone.** Starting and resetting are
+  recoverable; counting throws away votes nobody has cast yet, and it takes one
+  impatient person to do that to five others.
+- **Verdicts are batched.** The client holds them in memory and submits a whole
+  deck in one request, flushing early if the tab is hidden or the deadline is
+  close. Writes are idempotent per (room, member, card), so overlapping batches
+  converge rather than inflating a tally.
+- **A tie says so.** The tally reports which rule broke it — closest walk, then
+  alphabetically — because crowning one of three equal favourites silently reads
+  as an opinion the app did not earn.
 
 ## Layout
 
@@ -112,7 +123,34 @@ would trigger a refetch, which would heartbeat again.
 | [`src/server/lunch/`](src/server/lunch) | Seeded shuffle, tally, room view types |
 | [`src/server/api/routers/room.ts`](src/server/api/routers/room.ts) | Every mutation the app can make |
 | [`src/hooks/use-room-channel.ts`](src/hooks/use-room-channel.ts) | Realtime subscription and presence |
-| [`src/app/_components/`](src/app/_components) | Lobby, swipe deck, results |
+| [`src/app/_components/`](src/app/_components) | Home form, swipe deck, results |
+| [`src/app/api/place-photo/[id]/`](src/app/api/place-photo/%5Bid%5D) | Card photos, proxied live from Google |
+| [`scripts/fetch-nearby.ts`](scripts/fetch-nearby.ts) | Draft a deck from Places Nearby Search |
+| [`video/`](video) | The Remotion promo — see below |
+
+## The promo video
+
+A 29-second vertical clip built with [Remotion](https://www.remotion.dev): the
+title, the room code, four swipes, the waiting screen with the clock running
+down, the tie being explained, and the stack.
+
+```bash
+bun run video:studio   # preview and scrub in the browser
+bun run video:render    # out/lunch-tinder.mp4 — 1080x1920, ~4MB
+bun run video:still -- --frame=246   # one frame, for a thumbnail
+```
+
+Two things worth knowing before editing it. The directory is `video/`, not
+`remotion/`, because `tsconfig.json` sets `baseUrl: "."` and a folder of that
+name shadows the package — every `import … from "remotion"` would resolve to the
+video's own entry point. And it shares no code with the app: the palette and the
+card data are restated in `video/theme.ts` and `video/data.ts` so the render
+never pulls in Prisma or Tailwind. Change the app's palette and you change that
+file too.
+
+The cards show the emoji fallback rather than Google photos on purpose. Maps
+Platform terms cap how long fetched place content may be cached, and a rendered
+MP4 is a cache that never expires.
 
 ## Housekeeping
 
