@@ -28,6 +28,17 @@ export type Tallied = {
 	likedBy: string[];
 };
 
+/**
+ * A tie for first place, and the rule that settled it. Null when the winner won
+ * outright. See describeTie — this exists so the results screen can say why,
+ * rather than presenting a coin toss as a verdict.
+ */
+export type TieBreak = {
+	/** How many spots share the winning vote count, the winner included. */
+	count: number;
+	brokenBy: "unanimous" | "walk" | "name";
+};
+
 export type RoomView = {
 	code: string;
 	phase: RoomPhase;
@@ -36,8 +47,15 @@ export type RoomView = {
 	deckSize: number;
 	/** Empty while the room is still in the lobby. */
 	deck: Restaurant[];
+	/** When the votes get counted regardless of who has finished. Null on rooms
+	 * that predate the deadline, and irrelevant once the phase is "results". */
+	votingEndsAt: Date | null;
 	/** Populated only once the phase is "results" — see tallyRoom. */
-	results: { ranked: Tallied[]; memberCount: number } | null;
+	results: {
+		ranked: Tallied[];
+		memberCount: number;
+		tie: TieBreak | null;
+	} | null;
 };
 
 export function isRoomPhase(value: string): value is RoomPhase {

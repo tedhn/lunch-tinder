@@ -14,6 +14,10 @@ export const env = createEnv({
 		DIRECT_URL: z.string().url(),
 		// How many cards land in a room's deck.
 		DECK_SIZE: z.coerce.number().int().positive().default(20),
+		// How long a round stays open before the votes are counted regardless of
+		// who has finished. Ten minutes is about as long as a group will wait on a
+		// colleague who has wandered off to a meeting.
+		ROUND_MINUTES: z.coerce.number().int().positive().default(10),
 		// Google Maps Platform key, used only by /api/place-photo/[id] and by
 		// scripts/fill-place-ids.ts. Optional: without it the cards fall back to
 		// their emoji, and nothing else in the app notices. Server-side only —
@@ -44,6 +48,7 @@ export const env = createEnv({
 		DATABASE_URL: process.env.DATABASE_URL,
 		DIRECT_URL: process.env.DIRECT_URL,
 		DECK_SIZE: process.env.DECK_SIZE,
+		ROUND_MINUTES: process.env.ROUND_MINUTES,
 		GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
 		NODE_ENV: process.env.NODE_ENV,
 		NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,

@@ -58,12 +58,23 @@ model Restaurant {
 model Room {
     code String @id
 
-    /// Whoever created the room. Shown as a badge in the lobby; it grants no
-    /// extra powers, so a host whose phone dies cannot strand everyone else.
+    /// Whoever created the room. The one power it carries is ending the round
+    /// early; everything else any member can do. A host whose phone dies
+    /// therefore delays nothing — the deadline below still lands.
     hostId String @default("") @map("host_id")
 
     /// "lobby" | "swiping" | "results" — see RoomPhase in src/server/lunch/types.ts.
     phase String @default("lobby")
+
+    /// When the votes get counted whether or not everybody has finished. Set
+    /// when a round starts; null on rooms created before it existed, which then
+    /// only end when everyone finishes or the host says so.
+    ///
+    /// Deliberately a deadline rather than a countdown: a stored "minutes left"
+    /// would need something to tick it, whereas a timestamp is just true. The
+    /// round is closed by whichever client reads the room next — see
+    /// buildRoomView — so no cron is involved.
+    votingEndsAt DateTime? @map("voting_ends_at")
 
     /// Deck order is frozen at creation and shared by every member, so the
     /// "3 of 5 finished" progress counts refer to the same cards for everyone.

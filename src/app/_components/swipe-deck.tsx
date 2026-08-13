@@ -122,9 +122,12 @@ export function SwipeDeck({
 						{/* The room code doubles as the invite, now that there is no lobby
 						    screen to hold a share button. */}
 						<ShareCode code={room.code} />
-						<span className="shrink-0 text-muted-foreground text-xs">
-							{Math.min(index, room.deckSize)} / {room.deckSize}
-						</span>
+						<div className="flex shrink-0 items-baseline gap-3 text-xs">
+							<Countdown endsAt={room.votingEndsAt} />
+							<span className="text-muted-foreground">
+								{Math.min(index, room.deckSize)} / {room.deckSize}
+							</span>
+						</div>
 					</div>
 					<div className="h-1 overflow-hidden rounded-full bg-muted">
 						<motion.div
@@ -193,9 +196,11 @@ export function SwipeDeck({
 					{!top && (
 						<WaitingForOthers
 							isHost={room.hostId === userId}
+							onlineIds={onlineIds}
 							onReveal={() => reveal.mutate({ code: room.code, userId })}
 							pending={reveal.isPending}
 							room={room}
+							userId={userId}
 						/>
 					)}
 				</div>
@@ -233,6 +238,53 @@ export function SwipeDeck({
 				/>
 			)}
 		</main>
+	);
+}
+
+/**
+ * Time left before the votes get counted regardless.
+ *
+ * Also what ends the round on time. Nothing on the server is scheduled: reading
+ * the room is what closes an expired one, so when this hits zero it asks for a
+ * fresh read and the phase flips to results. The 30s backstop poll would get
+ * there eventually; this makes it land on the second.
+ *
+ * Null on rooms created before the deadline existed — those still end the old
+ * way, when everyone finishes or the host says so.
+ */
+function Countdown({ endsAt }: { endsAt: Date | null }) {
+	const utils = api.useUtils();
+	const [now, setNow] = useState(() => Date.now());
+
+	useEffect(() => {
+		if (!endsAt) return;
+		const tick = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(tick);
+	}, [endsAt]);
+
+	const msLeft = endsAt ? endsAt.getTime() - now : null;
+
+	useEffect(() => {
+		if (msLeft === null || msLeft > 0) return;
+		void utils.room.state.invalidate();
+	}, [msLeft, utils]);
+
+	if (msLeft === null) return null;
+
+	const seconds = Math.max(0, Math.ceil(msLeft / 1000));
+	const label = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
+	// Under a minute the deadline stops being background information.
+	return (
+		<span
+			className={
+				seconds <= 60
+					? "font-semibold text-destructive"
+					: "text-muted-foreground"
+			}
+		>
+			{seconds === 0 ? "counting…" : `${label} left`}
+		</span>
 	);
 }
 
@@ -849,13 +901,26 @@ function Attribution({
 	);
 }
 
+/**
+ * What somebody who has finished sees while the round is still open.
+ *
+ * This is the screen with the least to do and the most to explain, so it carries
+ * the full roster: who is online, how far each person has got, and how long
+ * until the votes are counted anyway. The alternative — "waiting on Ted" and a
+ * spinner — is the version where people start asking out loud whether the app is
+ * broken or Ted is just slow.
+ */
 function WaitingForOthers({
 	room,
+	userId,
+	onlineIds,
 	pending,
 	isHost,
 	onReveal,
 }: {
 	room: RoomState;
+	userId: string;
+	onlineIds: Set<string>;
 	pending: boolean;
 	isHost: boolean;
 	onReveal: () => void;
@@ -864,7 +929,7 @@ function WaitingForOthers({
 	const host = room.members.find((m) => m.userId === room.hostId);
 
 	return (
-		<div className="flex h-full flex-col items-center justify-center text-center">
+		<div className="flex h-full flex-col items-center justify-center px-1 text-center">
 			<motion.div
 				animate={{ rotate: [0, 12, -12, 0] }}
 				className="text-5xl"
@@ -878,23 +943,64 @@ function WaitingForOthers({
 					? "Counting the votes…"
 					: `Waiting on ${waiting.map((m) => m.name).join(", ")}`}
 			</p>
+
+			{/* The deadline is the reassurance: nobody has to wonder whether a
+			    colleague who wandered into a meeting has stalled lunch forever. */}
+			{room.votingEndsAt && (
+				<p className="mt-2 text-muted-foreground text-xs">
+					Votes are counted in <Countdown endsAt={room.votingEndsAt} /> either
+					way.
+				</p>
+			)}
+
+			<Card className="mt-6 w-full gap-0 divide-y rounded-2xl p-0 text-left">
+				{room.members.map((m) => (
+					<div className="flex items-center gap-3 px-4 py-2.5" key={m.userId}>
+						<span
+							className={`size-2 shrink-0 rounded-full ${
+								onlineIds.has(m.userId)
+									? "bg-[--color-teal]"
+									: "bg-muted-foreground/40"
+							}`}
+							title={onlineIds.has(m.userId) ? "On the app" : "Away"}
+						/>
+						<span className="min-w-0 flex-1 truncate font-medium text-sm">
+							{m.name}
+							{m.userId === userId && (
+								<span className="ml-1.5 text-muted-foreground text-xs">
+									you
+								</span>
+							)}
+						</span>
+						{m.done ? (
+							<Badge className="bg-[--color-teal]/15 font-semibold text-[--color-teal-deep]">
+								done
+							</Badge>
+						) : (
+							<span className="shrink-0 text-muted-foreground text-xs">
+								{m.swipedCount}/{room.deckSize}
+							</span>
+						)}
+					</div>
+				))}
+			</Card>
 			{/* Ending the round early throws away votes not yet cast, so it belongs
 			    to whoever opened the room. Everyone else is told who that is rather
 			    than shown a button that would only return a 403. */}
 			{waiting.length > 0 &&
 				(isHost ? (
 					<Button
-						className="mt-8 h-12 rounded-2xl px-5 font-bold active:scale-95"
+						className="mt-6 h-12 rounded-2xl px-5 font-bold active:scale-95"
 						disabled={pending}
 						onClick={onReveal}
 						variant="outline"
 					>
-						{pending ? "Revealing…" : "Reveal without them"}
+						{pending ? "Counting…" : "Count the votes now"}
 					</Button>
 				) : (
-					<p className="mt-8 max-w-[15rem] text-muted-foreground text-xs">
+					<p className="mt-6 max-w-[16rem] text-muted-foreground text-xs">
 						{host
-							? `${host.name} started this room and can end the round early.`
+							? `${host.name} started this room and can count the votes early.`
 							: "The round ends once everyone has finished."}
 					</p>
 				))}

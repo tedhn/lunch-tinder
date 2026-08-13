@@ -124,11 +124,78 @@ assert.equal(await db.swipe.count({ where: { roomCode: code } }), 0);
 const after = state.deck.map((p) => p.id);
 assert.notDeepEqual(after, before, "reset should reshuffle the deck");
 
-// Reveal early, with Bob having swiped nothing this round.
+// A fresh round carries a deadline, and it is in the future.
+assert.ok(state.votingEndsAt, "a round should have a deadline");
+assert.ok(
+	state.votingEndsAt.getTime() > Date.now(),
+	"the deadline should not already have passed",
+);
+
+// The deadline is what counts the votes when nobody finishes. Winding it into
+// the past is the only way to test that without waiting ten minutes; the phase
+// flips on the next read, with no scheduler involved.
 await caller.room.swipe({
 	code,
 	userId: alice,
 	restaurantId: after[0]!,
+	like: true,
+});
+await db.room.update({
+	where: { code },
+	data: { votingEndsAt: new Date(Date.now() - 1000) },
+});
+state = await caller.room.state({ code });
+assert.equal(state.phase, "results", "an expired round should close on read");
+assert.equal(
+	state.results!.ranked[0]!.place.id,
+	after[0]!,
+	"the one vote cast before the deadline should still win",
+);
+assert.equal(state.votingEndsAt, null, "results carry no deadline");
+
+// Ties are reported rather than silently resolved. Alice and Bob each like a
+// different spot, so two places sit on one vote and the rule has to be named.
+await caller.room.reset({ code, userId: alice });
+state = await caller.room.state({ code });
+const tieDeck = state.deck;
+const [first, second] = [tieDeck[0]!, tieDeck[1]!];
+await caller.room.swipe({
+	code,
+	userId: alice,
+	restaurantId: first.id,
+	like: true,
+});
+await caller.room.swipe({
+	code,
+	userId: bob,
+	restaurantId: second.id,
+	like: true,
+});
+await caller.room.reveal({ code, userId: alice });
+state = await caller.room.state({ code });
+assert.ok(state.results?.tie, "two spots on one vote each is a tie");
+assert.equal(state.results.tie.count, 2);
+assert.ok(
+	["walk", "name"].includes(state.results.tie.brokenBy),
+	`unexpected tie-break: ${state.results.tie.brokenBy}`,
+);
+const [tieWinner, tieRunnerUp] = state.results.ranked;
+assert.equal(tieWinner!.likes, tieRunnerUp!.likes, "the top two are level");
+assert.ok(
+	tieWinner!.place.walkMinutes <= tieRunnerUp!.place.walkMinutes,
+	"the closer of two level spots should win",
+);
+
+// Back to a clean round for the host-only checks below.
+await caller.room.reset({ code, userId: alice });
+state = await caller.room.state({ code });
+const afterTie = state.deck.map((p) => p.id);
+
+// Reveal early, with Bob having swiped nothing this round.
+await caller.room.swipe({
+	code,
+	userId: alice,
+	restaurantId: afterTie[0]!,
 	like: true,
 });
 

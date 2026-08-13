@@ -20,6 +20,18 @@ export function Results({ room, userId }: { room: RoomState; userId: string }) {
 	const anyLikes = ranked.some((r) => r.likes > 0);
 	const [winner, ...rest] = ranked;
 
+	// A tie for first is decided by rule, not by luck, and the rule is named on
+	// screen. Silently crowning one of two equal favourites is how the app looks
+	// like it has an opinion it did not earn.
+	const tie = room.results?.tie ?? null;
+	const tieReason =
+		tie &&
+		{
+			unanimous: "everyone liked it",
+			walk: "it is the shorter walk",
+			name: "same walk, so alphabetical order settled it",
+		}[tie.brokenBy];
+
 	return (
 		<main className="flex min-h-dvh flex-col px-5 py-8">
 			<div className="mx-auto w-full max-w-sm">
@@ -54,11 +66,21 @@ export function Results({ room, userId }: { room: RoomState; userId: string }) {
 									{winner.place.emoji}
 								</div>
 								<div className="relative">
-									{winner.unanimous && (
-										<Badge className="bg-[--color-teal]/15 font-bold text-[--color-teal-deep] text-[11px] uppercase tracking-wider">
-											Unanimous
-										</Badge>
-									)}
+									<div className="flex flex-wrap gap-2">
+										{winner.unanimous && (
+											<Badge className="bg-[--color-teal]/15 font-bold text-[--color-teal-deep] text-[11px] uppercase tracking-wider">
+												Unanimous
+											</Badge>
+										)}
+										{tie && (
+											<Badge
+												className="font-bold text-[11px] uppercase tracking-wider"
+												variant="secondary"
+											>
+												{tie.count}-way tie
+											</Badge>
+										)}
+									</div>
 									<h2 className="mt-3 font-black text-3xl leading-tight">
 										{winner.place.name}
 									</h2>
@@ -71,6 +93,16 @@ export function Results({ room, userId }: { room: RoomState; userId: string }) {
 										{winner.likedBy.length > 0 &&
 											` — ${winner.likedBy.join(", ")}`}
 									</p>
+									{/* Said plainly, because the alternative is a room arguing
+									    about why the app picked this one. "Go again" below is the
+									    answer if they would rather re-vote than accept the rule. */}
+									{tie && (
+										<p className="mt-2 text-[--color-rose-deep] text-sm">
+											{tie.count} spots got {winner.likes}{" "}
+											{winner.likes === 1 ? "vote" : "votes"} each.{" "}
+											{winner.place.name} wins because {tieReason}.
+										</p>
+									)}
 									{winner.place.googleUrl && (
 										<Button
 											className="mt-5 h-12 w-full rounded-2xl bg-[--color-teal] font-bold text-[--color-ink] text-base hover:bg-[--color-teal]/80 active:scale-[0.98]"

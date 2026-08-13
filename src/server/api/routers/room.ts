@@ -86,12 +86,70 @@ function orderDeck(deckIds: string[], places: Restaurant[]): Restaurant[] {
 		.filter((p): p is Restaurant => p !== undefined);
 }
 
-async function buildRoomView(db: PrismaClient, room: Room): Promise<RoomView> {
-	const phase = phaseOf(room);
-	const members = await db.member.findMany({
-		where: { roomCode: room.code },
-		orderBy: { joinedAt: "asc" },
+/**
+ * Progress per member, counted from the swipe rows themselves.
+ *
+ * `member.swiped_count` is a cache that exists to make a swipe broadcast a row
+ * change over Realtime — it is not the truth. Reading the rows here means a
+ * count that drifted for any reason corrects itself on the next fetch instead of
+ * leaving somebody stuck at 19/20 on everybody's screen with no card left to
+ * swipe and no way back.
+ */
+async function countsByMember(
+	db: PrismaClient,
+	code: string,
+): Promise<Map<string, number>> {
+	const grouped = await db.swipe.groupBy({
+		by: ["userId"],
+		where: { roomCode: code },
+		_count: { _all: true },
 	});
+	return new Map(grouped.map((g) => [g.userId, g._count._all]));
+}
+
+async function buildRoomView(db: PrismaClient, room: Room): Promise<RoomView> {
+	const [stored, counts] = await Promise.all([
+		db.member.findMany({
+			where: { roomCode: room.code },
+			orderBy: { joinedAt: "asc" },
+		}),
+		countsByMember(db, room.code),
+	]);
+
+	const members = stored.map((m) => ({
+		...m,
+		swipedCount: counts.get(m.userId) ?? 0,
+	}));
+
+	let phase = phaseOf(room);
+
+	// A read that also finishes the round, which is unusual enough to justify
+	// twice over.
+	//
+	// The deadline is the first reason. Nothing schedules anything — no cron, no
+	// worker — so "the votes are counted at 12:40" has to become true when
+	// somebody looks. Every client polls this every 30s and refetches on
+	// Realtime, so in practice it closes within a second of expiring.
+	//
+	// The second is auto-reveal. It normally fires from the last swipe, but only
+	// if the swipe completing the deck is the one that observes everybody
+	// finished. When it is not — a lost response, or a count that was wrong at
+	// the time — the room sits in "swiping" with every card swiped and no way for
+	// any client to advance it: no card left to swipe, nobody left to wait for.
+	// Checking here converges instead, and is idempotent either way.
+	const expired =
+		room.votingEndsAt !== null && room.votingEndsAt.getTime() <= Date.now();
+
+	if (
+		phase === "swiping" &&
+		(expired || allDone(members, room.deckIds.length))
+	) {
+		await db.room.update({
+			where: { code: room.code },
+			data: { phase: "results", lastActivity: new Date() },
+		});
+		phase = "results";
+	}
 
 	// The lobby has no need for card data, and shipping it early would let a
 	// curious member read the whole deck before anyone starts.
@@ -120,8 +178,14 @@ async function buildRoomView(db: PrismaClient, room: Room): Promise<RoomView> {
 		members: toMemberViews(members, room.deckIds.length),
 		deckSize: room.deckIds.length,
 		deck,
+		votingEndsAt: phase === "swiping" ? room.votingEndsAt : null,
 		results,
 	};
+}
+
+/** When a round started now would close. */
+function roundDeadline(): Date {
+	return new Date(Date.now() + env.ROUND_MINUTES * 60_000);
 }
 
 export const roomRouter = createTRPCRouter({
@@ -165,6 +229,7 @@ export const roomRouter = createTRPCRouter({
 							code,
 							hostId: input.userId,
 							phase: "swiping",
+							votingEndsAt: roundDeadline(),
 							deckIds,
 							members: {
 								create: { userId: input.userId, name: input.name },
@@ -216,11 +281,21 @@ export const roomRouter = createTRPCRouter({
 			// Rooms opened before the waiting room was removed can still be sitting
 			// in "lobby". Whoever arrives next moves them along, so nobody lands on a
 			// screen whose only button is gone.
-			const phase = phaseOf(room) === "lobby" ? "swiping" : phaseOf(room);
+			const wasLobby = phaseOf(room) === "lobby";
+			const phase = wasLobby ? "swiping" : phaseOf(room);
 
 			await ctx.db.room.update({
 				where: { code: room.code },
-				data: { phase, lastActivity: new Date() },
+				data: {
+					phase,
+					// A round that starts here starts its clock here. Joining a round
+					// already under way must not extend it — that is the one thing a
+					// latecomer should not be able to do to everyone else.
+					...(wasLobby || (phase === "swiping" && room.votingEndsAt === null)
+						? { votingEndsAt: roundDeadline() }
+						: {}),
+					lastActivity: new Date(),
+				},
 			});
 
 			return { code: room.code, phase };
@@ -250,7 +325,11 @@ export const roomRouter = createTRPCRouter({
 
 		const started = await ctx.db.room.update({
 			where: { code: room.code },
-			data: { phase: "swiping", lastActivity: new Date() },
+			data: {
+				phase: "swiping",
+				votingEndsAt: roundDeadline(),
+				lastActivity: new Date(),
+			},
 		});
 		return buildRoomView(ctx.db, started);
 	}),
@@ -288,6 +367,18 @@ export const roomRouter = createTRPCRouter({
 			}
 
 			await ctx.db.$transaction(async (tx) => {
+				// Serialises this member's swipes against each other.
+				//
+				// Without the lock, two quick swipes race: under READ COMMITTED each
+				// transaction inserts its own row but counts without seeing the other's
+				// uncommitted one, so both compute the same total and the second write
+				// wins with a number one too low. That is how a member ends up parked
+				// at 19/20 with all 20 swipe rows present — visible to everyone, and
+				// unfixable from the UI because there is no card left to swipe. Taking
+				// the row lock first means the second transaction counts after the
+				// first has committed.
+				await tx.$queryRaw`SELECT 1 FROM member WHERE room_code = ${room.code} AND user_id = ${input.userId} FOR UPDATE`;
+
 				await tx.swipe.upsert({
 					where: {
 						roomCode_userId_restaurantId: {
@@ -322,10 +413,17 @@ export const roomRouter = createTRPCRouter({
 			});
 
 			// Auto-reveal once everyone is through the deck, so the round does not
-			// wait on somebody remembering to press a button.
-			const members = await ctx.db.member.findMany({
-				where: { roomCode: room.code },
-			});
+			// wait on somebody remembering to press a button. Counted from the swipe
+			// rows for the same reason buildRoomView does: a stale cached count here
+			// would hold the whole room open on a deck that is actually finished.
+			const [stored, counts] = await Promise.all([
+				ctx.db.member.findMany({ where: { roomCode: room.code } }),
+				countsByMember(ctx.db, room.code),
+			]);
+			const members = stored.map((m) => ({
+				...m,
+				swipedCount: counts.get(m.userId) ?? 0,
+			}));
 
 			if (allDone(members, room.deckIds.length)) {
 				await ctx.db.room.update({
@@ -381,7 +479,13 @@ export const roomRouter = createTRPCRouter({
 				// Straight back to swiping, not to a lobby: there is no waiting-room
 				// screen left to press a button on, so a reset that parked the room in
 				// "lobby" would leave everyone looking at a deck nobody can advance.
-				data: { phase: "swiping", deckIds, lastActivity: new Date() },
+				// A fresh round gets a fresh deadline.
+				data: {
+					phase: "swiping",
+					votingEndsAt: roundDeadline(),
+					deckIds,
+					lastActivity: new Date(),
+				},
 			}),
 		]);
 
