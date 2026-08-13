@@ -1,19 +1,26 @@
 /**
  * Curated lunch spots — the deck source.
  *
- * This list is hand-maintained rather than fetched. `googleUrl` is derived from
- * the name here, so it is a Google Maps *search* link unless you supply a
- * `placeId` — good enough to hand off once a room agrees, and exact if you do.
+ * The current list is walking distance from the Ara Damansara office. It was
+ * drafted by `bun scripts/fetch-nearby.ts` (Places Nearby Search, 800m, up to
+ * $$) and then edited by hand: cuisines and emoji corrected where Google's
+ * primary type was only "restaurant", ids shortened, and Google's raw `types`
+ * rewritten as tags a human would use.
  *
- * Only the place ID and your own typed-in fields are stored. Google Maps
- * Platform terms cap caching of fetched place content (names, price levels,
- * photos) at 30 days; place IDs are exempt and may be kept indefinitely. Keeping
- * this file hand-written is what avoids that refresh obligation entirely.
+ * That editing pass is the point, not overhead. A radius of restaurants is not
+ * a lunch list, and this file being hand-maintained is also what keeps it clear
+ * of Google's caching rules: place IDs may be stored indefinitely, but fetched
+ * place content — names, price levels, photos — is capped at 30 days. Nothing
+ * here is refreshed from Google on a schedule; card photos are fetched live
+ * through /api/place-photo/[id] instead.
+ *
+ * `googleUrl` is derived from the name, so it is a Maps *search* link unless a
+ * `placeId` is set, which pins it to the exact shop.
  *
  * Edit this file for your own office and re-run `bun run db:seed`. Rows are
- * upserted by id, so editing a name or walk time updates in place, and dropping
- * an entry from the array leaves the old row alone — set `active: false` on it
- * instead if you want it out of future decks.
+ * upserted by id, so editing a name or walk time updates in place; an entry
+ * dropped from the array is deactivated rather than deleted, which keeps past
+ * rooms intact.
  *
  * `walkMinutes` is measured from the office, so it is the one field you must
  * localise. Everything else travels fine.
@@ -32,8 +39,9 @@ export type Seed = {
 	tags: string[];
 	/** Leave undefined unless you have seen the certification or the signage
 	 * yourself. Undefined shows no badge at all; `false` says "checked, and it
-	 * is not". Guessing from cuisine is how someone ends up at a lunch they
-	 * cannot eat, so the seed below only marks the spots already tagged halal. */
+	 * is not". Google does not model halal status and guessing it from cuisine
+	 * is how someone ends up at a lunch they cannot eat, so every entry below —
+	 * all of them drafted from Places — is unset. */
 	halal?: boolean;
 	/** Google place ID, if you have looked one up. Pins the Maps link to the
 	 * exact shop instead of leaving Maps to guess from the name, and is what
@@ -43,230 +51,208 @@ export type Seed = {
 };
 
 /** Exported so scripts/fill-place-ids.ts can read the list without duplicating
- * it. Importing this file does not seed anything — see the guard at the end. */
+ * it. Importing this file does not seed anything — see the guard at the end.
+ * Ordered by walking distance, nearest first. */
 export const SPOTS: Seed[] = [
 	{
-		id: "pelita",
-		name: "Nasi Kandar Pelita",
-		cuisine: "Nasi Kandar",
-		emoji: "🍛",
-		priceLevel: 1,
-		walkMinutes: 6,
-		tags: ["halal", "quick", "spicy"],
-		halal: true,
-	},
-	{
-		id: "village-park",
-		name: "Village Park Restaurant",
-		cuisine: "Nasi Lemak",
-		emoji: "🥥",
-		priceLevel: 1,
-		walkMinutes: 14,
-		tags: ["halal", "local-favourite", "queue"],
-		halal: true,
-	},
-	{
-		id: "yut-kee",
-		name: "Yut Kee Restaurant",
-		cuisine: "Hainanese",
-		emoji: "🍤",
-		priceLevel: 1,
-		walkMinutes: 11,
-		tags: ["local-favourite", "old-school"],
-	},
-	{
-		id: "sri-nirwana",
-		name: "Sri Nirwana Maju",
-		cuisine: "Banana Leaf",
-		emoji: "🍌",
-		priceLevel: 1,
-		walkMinutes: 9,
-		tags: ["indian", "vegetarian-friendly", "messy"],
-	},
-	{
-		id: "wong-kee",
-		name: "Wong Kee Claypot Chicken Rice",
-		cuisine: "Chinese",
-		emoji: "🍲",
-		priceLevel: 1,
-		walkMinutes: 8,
-		tags: ["comfort", "slow-cooked"],
-	},
-	{
-		id: "ah-cheng-laksa",
-		name: "Ah Cheng Laksa",
-		cuisine: "Laksa",
-		emoji: "🍜",
-		priceLevel: 1,
-		walkMinutes: 7,
-		tags: ["noodles", "spicy", "quick"],
-	},
-	{
-		id: "restoran-yusoof",
-		name: "Restoran Yusoof Dan Zakhir",
-		cuisine: "Mamak",
-		emoji: "🫓",
-		priceLevel: 1,
+		id: "yan-wo-seafood",
+		name: "Yan Wo Seafood Restaurant (Aman Suria)",
+		cuisine: "Seafood",
+		emoji: "🦐",
+		priceLevel: 2,
 		walkMinutes: 5,
-		tags: ["halal", "quick", "roti"],
-		halal: true,
+		tags: ["seafood", "chinese"],
+		placeId: "ChIJXUUsWNVPzDERzOOnLLbnH0E",
 	},
 	{
-		id: "kim-lian-kee",
-		name: "Kim Lian Kee Hokkien Mee",
-		cuisine: "Hokkien Mee",
-		emoji: "🍝",
-		priceLevel: 1,
-		walkMinutes: 12,
-		tags: ["noodles", "smoky", "heavy"],
+		id: "jatujak",
+		name: "Jatujak Bangkok Street Food",
+		cuisine: "Thai",
+		emoji: "🍤",
+		priceLevel: 2,
+		walkMinutes: 6,
+		tags: ["thai", "street-food", "grill"],
+		placeId: "ChIJ0awL4phOzDER8GmP5QWIajk",
 	},
 	{
-		id: "sushi-zanmai",
-		name: "Sushi Zanmai",
+		id: "dozo",
+		name: "Dozo Cantara Retail, Ara Damansara",
 		cuisine: "Japanese",
 		emoji: "🍣",
 		priceLevel: 2,
-		walkMinutes: 10,
-		tags: ["mall", "aircon", "raw"],
+		walkMinutes: 6,
+		tags: ["japanese", "sushi", "aircon"],
+		placeId: "ChIJSd6bantPzDER_G6iGrmQUPw",
 	},
 	{
-		id: "ichiran-style-ramen",
-		name: "Menya Musashi",
-		cuisine: "Ramen",
-		emoji: "🍥",
-		priceLevel: 2,
-		walkMinutes: 10,
-		tags: ["japanese", "aircon", "rich"],
-	},
-	{
-		id: "boat-noodle",
-		name: "Boat Noodle",
-		cuisine: "Thai",
-		emoji: "🛶",
+		id: "sun-yin-loong",
+		name: "Restoran Sun Yin Loong",
+		cuisine: "Chinese",
+		emoji: "🥡",
 		priceLevel: 1,
-		walkMinutes: 10,
-		tags: ["halal", "small-bowls", "spicy"],
-		halal: true,
+		walkMinutes: 6,
+		tags: ["chinese", "kopitiam", "breakfast"],
+		placeId: "ChIJW8bid6ROzDERsL_KPxh6pnw",
 	},
 	{
-		id: "nando-s",
-		name: "Nando's",
-		cuisine: "Portuguese Grill",
+		id: "pj-khao-man-gai",
+		name: "PJ Khao Man Gai",
+		cuisine: "Thai",
+		emoji: "🍗",
+		priceLevel: 1,
+		walkMinutes: 7,
+		tags: ["thai", "chicken-rice", "quick"],
+		placeId: "ChIJP3zW3NxPzDERkjEL3B1h9PM",
+	},
+	{
+		id: "shan-mu-cafe",
+		name: "Shan Mu Cafe PJ",
+		cuisine: "Japanese",
+		emoji: "🍱",
+		priceLevel: 2,
+		walkMinutes: 7,
+		tags: ["japanese", "cafe", "aircon"],
+		placeId: "ChIJh4payjBPzDERqJCVQ-5Cyno",
+	},
+	{
+		id: "yan-wo-thai",
+		name: "Yan Wo Thai",
+		cuisine: "Thai",
+		emoji: "🍜",
+		priceLevel: 2,
+		walkMinutes: 7,
+		tags: ["thai", "spicy"],
+		placeId: "ChIJXYeWlFtPzDERopW991RqxzY",
+	},
+	{
+		id: "kuan-kei",
+		name: "Kuan Kei Seafood Restaurant",
+		cuisine: "Seafood",
+		emoji: "🦑",
+		priceLevel: 2,
+		walkMinutes: 7,
+		tags: ["chinese", "seafood", "big-lunch"],
+		placeId: "ChIJL_xIxgxPzDERKBU7FJ3Lgow",
+	},
+	{
+		id: "bm-yam-rice",
+		name: "大山脚 BM Yam Rice @ Ara Damansara",
+		cuisine: "Chinese",
+		emoji: "🍚",
+		priceLevel: 2,
+		walkMinutes: 7,
+		tags: ["chinese", "yam-rice", "comfort"],
+		placeId: "ChIJQX2TsY9PzDER0KCXZXAEBvo",
+	},
+	{
+		id: "sangong-hot-pot",
+		name: "Sangong Charcoal Hot Pot • Ara Damansara",
+		cuisine: "Hot Pot",
+		emoji: "🍲",
+		priceLevel: 2,
+		walkMinutes: 7,
+		tags: ["hot-pot", "long-lunch", "aircon"],
+		placeId: "ChIJ20KqYgtPzDERlclnQmarZlo",
+	},
+	{
+		id: "heritage-kopitiam",
+		name: "Heritage Kopitiam 大马茶室 (Ara Damansara)",
+		cuisine: "Kopitiam",
+		emoji: "☕",
+		priceLevel: 1,
+		walkMinutes: 7,
+		tags: ["kopitiam", "local-favourite", "quick"],
+		placeId: "ChIJ-7CcE8hPzDERlB96Y0bugFU",
+	},
+	{
+		id: "mongddang",
+		name: "Mongddang korean bbq(Ara Damansara)",
+		cuisine: "Korean BBQ",
+		emoji: "🍖",
+		priceLevel: 2,
+		walkMinutes: 7,
+		tags: ["korean", "grill", "long-lunch"],
+		placeId: "ChIJ8wzU7L9PzDERLB5FUcgYiXU",
+	},
+	{
+		id: "wartek",
+		name: "WARTEK",
+		cuisine: "Indonesian",
+		emoji: "🍚",
+		priceLevel: 2,
+		walkMinutes: 8,
+		tags: ["indonesian", "rice", "spicy"],
+		placeId: "ChIJ4y4oKsxPzDERxJG4Ogvehhk",
+	},
+	{
+		id: "ara-thai-buffet",
+		name: "Ara Thai Buffet - Steamboat & Grill",
+		cuisine: "Thai Buffet",
+		emoji: "🍢",
+		priceLevel: 2,
+		walkMinutes: 8,
+		tags: ["buffet", "steamboat", "big-lunch"],
+		placeId: "ChIJE2c7PMlPzDEREPFhnmeZ2Es",
+	},
+	{
+		id: "yuen-kee",
+		name: "Restoran Yuen Kee Steamed Fish Head",
+		cuisine: "Seafood",
+		emoji: "🐟",
+		priceLevel: 2,
+		walkMinutes: 8,
+		tags: ["chinese", "fish-head", "sharing"],
+		placeId: "ChIJ9bf8ZqROzDERScXV3BkF6eo",
+	},
+	{
+		id: "uncle-soon",
+		name: "Uncle Soon Fried Rice • Ara Damansara",
+		cuisine: "Fried Rice",
+		emoji: "🍳",
+		priceLevel: 1,
+		walkMinutes: 8,
+		tags: ["chinese", "wok-hei", "quick"],
+		placeId: "ChIJi3dWJgBPzDER4CG7Jz5uF4o",
+	},
+	{
+		id: "asap-by-lye",
+		name: "Asap by Lye",
+		cuisine: "Barbecue",
 		emoji: "🔥",
 		priceLevel: 2,
 		walkMinutes: 9,
-		tags: ["halal", "chicken", "aircon"],
-		halal: true,
+		tags: ["barbecue", "smoky", "treat"],
+		placeId: "ChIJoc0J-2NPzDERQ5n_i14Qn30",
 	},
 	{
-		id: "vcr",
-		name: "VCR",
-		cuisine: "Cafe",
-		emoji: "☕",
+		id: "born-butcher",
+		name: "Born Butcher",
+		cuisine: "Western",
+		emoji: "🥩",
 		priceLevel: 2,
-		walkMinutes: 13,
-		tags: ["brunch", "coffee", "quiet"],
+		walkMinutes: 9,
+		tags: ["western", "steak", "aircon"],
+		placeId: "ChIJIeQ9bj1PzDER0gwwen4Sc3A",
 	},
 	{
-		id: "merchants-lane",
-		name: "Merchant's Lane",
-		cuisine: "Cafe",
-		emoji: "🥐",
-		priceLevel: 2,
-		walkMinutes: 15,
-		tags: ["brunch", "instagram", "queue"],
+		id: "thong-kee",
+		name: "Thong Kee Malaysia Kopitiam Ara Damansara",
+		cuisine: "Kopitiam",
+		emoji: "🍞",
+		priceLevel: 1,
+		walkMinutes: 10,
+		tags: ["kopitiam", "cheap", "quick"],
+		placeId: "ChIJcYTwB-lPzDERhy642z5XpXI",
 	},
 	{
-		id: "din-tai-fung",
-		name: "Din Tai Fung",
-		cuisine: "Taiwanese",
-		emoji: "🥟",
-		priceLevel: 3,
-		walkMinutes: 11,
-		tags: ["dumplings", "mall", "reliable"],
-	},
-	{
-		id: "restoran-beh-brothers",
-		name: "Restoran Beh Brothers",
-		cuisine: "Pan Mee",
+		id: "yat-yeh-hing",
+		name: "Restoran Yat Yeh Hing",
+		cuisine: "Chinese",
 		emoji: "🍲",
 		priceLevel: 1,
-		walkMinutes: 9,
-		tags: ["noodles", "chilli", "quick"],
-	},
-	{
-		id: "nasi-lemak-wanjo",
-		name: "Nasi Lemak Wanjo Kampung Baru",
-		cuisine: "Nasi Lemak",
-		emoji: "🍚",
-		priceLevel: 1,
-		walkMinutes: 16,
-		tags: ["halal", "local-favourite", "spicy"],
-		halal: true,
-	},
-	{
-		id: "ss2-chap-fan",
-		name: "Economy Rice Stall",
-		cuisine: "Mixed Rice",
-		emoji: "🍱",
-		priceLevel: 1,
-		walkMinutes: 4,
-		tags: ["cheap", "quick", "point-and-pick"],
-	},
-	{
-		id: "subway",
-		name: "Subway",
-		cuisine: "Sandwiches",
-		emoji: "🥪",
-		priceLevel: 2,
-		walkMinutes: 3,
-		tags: ["light", "quick", "desk-lunch"],
-	},
-	{
-		id: "salad-atelier",
-		name: "Salad Atelier",
-		cuisine: "Salads",
-		emoji: "🥗",
-		priceLevel: 2,
-		walkMinutes: 8,
-		tags: ["healthy", "light", "build-your-own"],
-	},
-	{
-		id: "restoran-rebung",
-		name: "Restoran Rebung",
-		cuisine: "Malay Buffet",
-		emoji: "🍛",
-		priceLevel: 3,
-		walkMinutes: 18,
-		tags: ["halal", "buffet", "big-lunch"],
-		halal: true,
-	},
-	{
-		id: "kedai-kopi-lai-foong",
-		name: "Kedai Kopi Lai Foong",
-		cuisine: "Beef Noodles",
-		emoji: "🐄",
-		priceLevel: 1,
-		walkMinutes: 12,
-		tags: ["old-school", "noodles", "no-aircon"],
-	},
-	{
-		id: "gyu-kaku-lunch-set",
-		name: "Gyu-Kaku",
-		cuisine: "Yakiniku",
-		emoji: "🥩",
-		priceLevel: 3,
-		walkMinutes: 11,
-		tags: ["treat", "aircon", "long-lunch"],
-	},
-	{
-		id: "banh-mi-cafe",
-		name: "Bánh Mì Cafe",
-		cuisine: "Vietnamese",
-		emoji: "🥖",
-		priceLevel: 1,
-		walkMinutes: 7,
-		tags: ["light", "quick", "takeaway"],
+		walkMinutes: 10,
+		tags: ["chinese", "seafood", "no-aircon"],
+		placeId: "ChIJO5zNLgBMzDERZjA-q-2p1jU",
 	},
 ];
 
@@ -305,7 +291,19 @@ async function main() {
 		});
 	}
 
-	console.log(`Seeded ${SPOTS.length} restaurants.`);
+	// Anything no longer in the list stops appearing in new decks, but the row
+	// stays: past rooms hold restaurant ids in `deck_ids` and swipes reference
+	// them, so deleting would tear holes in rooms that have already happened.
+	const retired = await db.restaurant.updateMany({
+		where: { id: { notIn: SPOTS.map((s) => s.id) }, active: true },
+		data: { active: false },
+	});
+
+	console.log(
+		`Seeded ${SPOTS.length} restaurants` +
+			(retired.count > 0 ? `, retired ${retired.count} no longer listed` : "") +
+			".",
+	);
 }
 
 // Only when run directly (`bun run db:seed`). Importing SPOTS from a script

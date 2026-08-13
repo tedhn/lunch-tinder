@@ -110,7 +110,12 @@ export async function GET(
 
 	if (!restaurant?.placeId) return new Response(null, { status: 404 });
 
-	const url = await fetchPhotoUrl(restaurant.placeId, apiKey);
+	// One retry, because a miss here is not free: the card sets its own fallback
+	// on the first error and stays on the emoji for the rest of that mount, so a
+	// momentary empty response from Places costs the photo for a whole round.
+	const url =
+		(await fetchPhotoUrl(restaurant.placeId, apiKey)) ??
+		(await fetchPhotoUrl(restaurant.placeId, apiKey));
 	if (!url) return new Response(null, { status: 404 });
 
 	cache.set(id, { url, expiresAt: Date.now() + CACHE_TTL_MS });
