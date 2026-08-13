@@ -1,5 +1,6 @@
 import "~/styles/globals.css";
 
+import { Analytics } from "@vercel/analytics/next";
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 
@@ -31,6 +32,10 @@ export default function RootLayout({
 		<html className={`${geist.variable}`} lang="en">
 			<body className="no-overscroll font-sans antialiased">
 				<TRPCReactProvider>{children}</TRPCReactProvider>
+				{/* Page views and Web Vitals from Vercel. It only reports once deployed
+				    there — locally the script is a no-op — and it collects no cookies,
+				    so there is nothing to consent to. */}
+				<Analytics />
 			</body>
 		</html>
 	);

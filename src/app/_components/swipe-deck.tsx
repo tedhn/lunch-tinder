@@ -8,7 +8,7 @@ import {
 	useMotionValue,
 	useTransform,
 } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -49,6 +49,28 @@ const COMMIT_VELOCITY = 550;
  * thumb never lands perfectly still, so zero would make the card feel dead. */
 const TAP_SLOP = 8;
 
+/** How early to send whatever has been swiped so far, so a slow swiper's votes
+ * are in before the round closes rather than rejected a second after it. */
+const FLUSH_BEFORE_DEADLINE_MS = 8_000;
+
+/**
+ * How far along somebody else is, in words.
+ *
+ * Since verdicts are submitted in a batch, a member's count is 0 until their
+ * round lands and then jumps to the full deck. Printing "0/20" for somebody who
+ * is actually on card 14 would be worse than saying nothing, so an unsubmitted
+ * member reads as "swiping". A number only appears when there is a real partial
+ * count behind it, which happens when a flush has already sent part of a round.
+ */
+function progressLabel(
+	member: RoomState["members"][number],
+	deckSize: number,
+): string {
+	if (member.done) return "done";
+	if (member.swipedCount > 0) return `${member.swipedCount}/${deckSize}`;
+	return "swiping";
+}
+
 /**
  * A dynamic `exit` has to live in `variants` — that is the only form motion
  * feeds `custom` into. Rotation is left out on purpose: it is derived from `x`,
@@ -76,27 +98,82 @@ export function SwipeDeck({
 	const me = room.members.find((m) => m.userId === userId);
 	const serverCount = me?.swipedCount ?? 0;
 
-	// The card leaves under the thumb immediately; the mutation catches up. The
-	// server count is the floor, so a swipe that failed to send is re-offered
-	// rather than silently skipped.
-	const [localCount, setLocalCount] = useState(serverCount);
-	const index = Math.max(localCount, serverCount);
+	// Verdicts live here until they are submitted — one request for a deck rather
+	// than one per card. A Map so a card swiped twice counts once, and in a ref as
+	// well as state because the flush paths below (tab hidden, deadline near) run
+	// outside React's render cycle and would otherwise send a stale copy.
+	const [verdicts, setVerdicts] = useState<Map<string, boolean>>(new Map());
+	const verdictsRef = useRef(verdicts);
+	verdictsRef.current = verdicts;
+
+	// Whatever the server has, plus whatever is still in hand. Submitted verdicts
+	// are counted twice over — once locally, once by the server — which is why
+	// this is a union of card ids rather than a sum of two numbers.
+	const submittedRef = useRef<Set<string>>(new Set());
+	const index = Math.max(serverCount, verdicts.size);
 
 	const reveal = api.room.reveal.useMutation();
 	const swipe = api.room.swipe.useMutation({
-		// Transient failures are the common case on a phone walking out of an
-		// office, and the deck has already moved on by the time one happens.
+		// A phone leaving the office wifi is the common case, and this request now
+		// carries a whole round rather than one card.
 		retry: 2,
 		retryDelay: (attempt) => 400 * 2 ** attempt,
-		onError: () => {
-			// Without this the optimistic count keeps a card that the server never
-			// recorded: the swiper sees "that's your lot" at 20/20 while everyone
-			// else sees them stuck on 19/20, and the auto-reveal that fires from the
-			// last swipe never happens, so the whole room waits on a vote that does
-			// not exist. Dropping back to the server's number re-offers the card.
-			setLocalCount(serverCount);
+		onSuccess: (_data, variables) => {
+			for (const v of variables.verdicts)
+				submittedRef.current.add(v.restaurantId);
 		},
 	});
+
+	/**
+	 * Sends everything not yet accepted by the server.
+	 *
+	 * Called when the deck runs out, when the tab is hidden, and shortly before
+	 * the deadline. Overlapping calls are safe: the endpoint is idempotent per
+	 * card, so the worst case is re-sending a verdict the server already has.
+	 */
+	const flush = useCallback(() => {
+		const pending = [...verdictsRef.current]
+			.filter(([restaurantId]) => !submittedRef.current.has(restaurantId))
+			.map(([restaurantId, like]) => ({ restaurantId, like }));
+
+		if (pending.length === 0) return;
+		swipe.mutate({ code: room.code, userId, verdicts: pending });
+	}, [room.code, userId, swipe]);
+
+	// A locked phone or a switched tab must not take the round's votes with it.
+	// `visibilitychange` is the one lifecycle event iOS Safari reliably fires
+	// before it freezes a page; `pagehide` covers the rest.
+	useEffect(() => {
+		const onHide = () => {
+			if (document.visibilityState === "hidden") flush();
+		};
+		document.addEventListener("visibilitychange", onHide);
+		window.addEventListener("pagehide", flush);
+		return () => {
+			document.removeEventListener("visibilitychange", onHide);
+			window.removeEventListener("pagehide", flush);
+		};
+	}, [flush]);
+
+	// And a few seconds before the deadline, because a batch that arrives after
+	// the round closes is rejected — the votes of somebody still on card 12 when
+	// the clock ran out would otherwise all be lost rather than just the cards
+	// they had not reached.
+	useEffect(() => {
+		if (!room.votingEndsAt) return;
+
+		const lead = room.votingEndsAt.getTime() - FLUSH_BEFORE_DEADLINE_MS;
+		const wait = lead - Date.now();
+		// Already inside the window: send now rather than scheduling the past.
+		if (wait <= 0) {
+			flush();
+			return;
+		}
+
+		const timer = setTimeout(flush, wait);
+		return () => clearTimeout(timer);
+	}, [room.votingEndsAt, flush]);
+
 	const [exitDir, setExitDir] = useState(0);
 	// Two pieces of state rather than one nullable: the sheet has a closing
 	// animation, so its content has to outlive the close. `detailFor` therefore
@@ -110,8 +187,14 @@ export function SwipeDeck({
 
 	function decide(place: Place, like: boolean) {
 		setExitDir(like ? 1 : -1);
-		setLocalCount(index + 1);
-		swipe.mutate({ code: room.code, userId, restaurantId: place.id, like });
+
+		const next = new Map(verdictsRef.current).set(place.id, like);
+		verdictsRef.current = next;
+		setVerdicts(next);
+
+		// The last card is the one that sends the round. Read from `next` rather
+		// than waiting for a re-render: this is the click that finished the deck.
+		if (next.size >= room.deck.length) flush();
 	}
 
 	return (
@@ -138,12 +221,23 @@ export function SwipeDeck({
 							transition={{ type: "spring", stiffness: 200, damping: 30 }}
 						/>
 					</div>
-					{/* Said out loud rather than swallowed: the card is about to reappear,
-					    and a card coming back with no explanation reads as a bug. */}
+					{/* A failed submission is a whole round of votes, not one card, so it
+					    gets a retry rather than a shrug. The verdicts are still in memory
+					    at this point — pressing this sends the same batch again. */}
 					{swipe.isError && (
-						<p className="mt-2 text-[11px] text-destructive">
-							That swipe did not save — here it is again.
-						</p>
+						<div className="mt-2 flex items-center justify-between gap-2">
+							<p className="text-[11px] text-destructive">
+								Votes not sent yet.
+							</p>
+							<Button
+								className="h-6 px-2 text-[11px]"
+								disabled={swipe.isPending}
+								onClick={flush}
+								variant="outline"
+							>
+								{swipe.isPending ? "Sending…" : "Retry"}
+							</Button>
+						</div>
 					)}
 					{others.length > 0 && (
 						<div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
@@ -156,7 +250,7 @@ export function SwipeDeck({
 									>
 										{m.name}
 									</span>{" "}
-									{m.done ? "✓" : `${m.swipedCount}/${room.deckSize}`}
+									{m.done ? "✓" : progressLabel(m, room.deckSize)}
 								</span>
 							))}
 						</div>
@@ -940,16 +1034,17 @@ function WaitingForOthers({
 			<p className="mt-4 font-bold text-lg">That's your lot</p>
 			<p className="mt-1 text-muted-foreground text-sm">
 				{waiting.length === 0
-					? "Counting the votes…"
-					: `Waiting on ${waiting.map((m) => m.name).join(", ")}`}
+					? "Everyone has swiped — the clock decides when it counts."
+					: `Still swiping: ${waiting.map((m) => m.name).join(", ")}`}
 			</p>
 
-			{/* The deadline is the reassurance: nobody has to wonder whether a
-			    colleague who wandered into a meeting has stalled lunch forever. */}
+			{/* The round runs to the clock even when everybody has finished, which
+			    means this line is the answer to "so what happens now". Latecomers can
+			    still join and vote in the time that is left, which is the reason the
+			    last swipe does not end anything. */}
 			{room.votingEndsAt && (
 				<p className="mt-2 text-muted-foreground text-xs">
-					Votes are counted in <Countdown endsAt={room.votingEndsAt} /> either
-					way.
+					Votes are counted in <Countdown endsAt={room.votingEndsAt} />.
 				</p>
 			)}
 
@@ -978,7 +1073,7 @@ function WaitingForOthers({
 							</Badge>
 						) : (
 							<span className="shrink-0 text-muted-foreground text-xs">
-								{m.swipedCount}/{room.deckSize}
+								{progressLabel(m, room.deckSize)}
 							</span>
 						)}
 					</div>
@@ -987,23 +1082,25 @@ function WaitingForOthers({
 			{/* Ending the round early throws away votes not yet cast, so it belongs
 			    to whoever opened the room. Everyone else is told who that is rather
 			    than shown a button that would only return a 403. */}
-			{waiting.length > 0 &&
-				(isHost ? (
-					<Button
-						className="mt-6 h-12 rounded-2xl px-5 font-bold active:scale-95"
-						disabled={pending}
-						onClick={onReveal}
-						variant="outline"
-					>
-						{pending ? "Counting…" : "Count the votes now"}
-					</Button>
-				) : (
-					<p className="mt-6 max-w-[16rem] text-muted-foreground text-xs">
-						{host
-							? `${host.name} started this room and can count the votes early.`
-							: "The round ends once everyone has finished."}
-					</p>
-				))}
+			{/* Offered whether or not anyone is still swiping: the round no longer
+			    ends by itself when the last person finishes, so without this the host
+			    would be watching a clock they are allowed to skip. */}
+			{isHost ? (
+				<Button
+					className="mt-6 h-12 rounded-2xl px-5 font-bold active:scale-95"
+					disabled={pending}
+					onClick={onReveal}
+					variant="outline"
+				>
+					{pending ? "Counting…" : "Count the votes now"}
+				</Button>
+			) : (
+				<p className="mt-6 max-w-[16rem] text-muted-foreground text-xs">
+					{host
+						? `${host.name} started this room and can count the votes early.`
+						: "The round ends when the clock does."}
+				</p>
+			)}
 		</div>
 	);
 }

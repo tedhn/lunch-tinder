@@ -16,12 +16,6 @@ export function toMemberViews(
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Everyone in the room has swiped the whole deck. Absent members still count. */
-export function allDone(members: Member[], deckSize: number): boolean {
-	if (members.length === 0 || deckSize === 0) return false;
-	return members.every((m) => m.swipedCount >= deckSize);
-}
-
 /**
  * Ranks the deck by like count. Only ever called once a room reaches "results"
  * — individual votes must never reach a client while people are still swiping.

@@ -32,40 +32,58 @@ await assert.rejects(
 		caller.room.swipe({
 			code,
 			userId: crypto.randomUUID(),
-			restaurantId: shared.id,
-			like: true,
+			verdicts: [{ restaurantId: shared.id, like: true }],
 		}),
 	/Join the room/,
 );
 
-// Cards outside the deck are refused.
+// Cards outside the deck are refused. A batch is filtered to the deck rather
+// than rejected wholesale, so this only throws because *nothing* in it counted.
 await assert.rejects(
 	() =>
 		caller.room.swipe({
 			code,
 			userId: alice,
-			restaurantId: "not-a-real-place",
-			like: true,
+			verdicts: [{ restaurantId: "not-a-real-place", like: true }],
 		}),
-	/not in this room/,
+	/None of those cards/,
 );
 
-// Alice swipes the whole deck: yes on the first card only.
-for (const [i, place] of deck.entries()) {
-	await caller.room.swipe({
-		code,
-		userId: alice,
+// A batch mixing a real card with a bogus one keeps the real one and drops the
+// other, which is what makes an unknown id a non-event rather than a lost round.
+const mixed = await caller.room.swipe({
+	code,
+	userId: alice,
+	verdicts: [
+		{ restaurantId: shared.id, like: true },
+		{ restaurantId: "not-a-real-place", like: true },
+	],
+});
+assert.equal(mixed.recorded, 1, "the bogus card should have been dropped");
+
+// Alice submits her whole deck in one request — yes on the first card only.
+// This is what the client does now: verdicts are held in memory while swiping
+// and sent together, so a round costs one request rather than twenty.
+const submitted = await caller.room.swipe({
+	code,
+	userId: alice,
+	verdicts: deck.map((place, i) => ({
 		restaurantId: place.id,
 		like: i === 0,
-	});
-}
+	})),
+});
+assert.equal(submitted.recorded, deck.length);
 
-// A double-tap must not inflate anything.
+// Re-sending an overlapping batch must not inflate anything — the flush paths
+// (tab hidden, deadline approaching) overlap with the final submission by
+// design, so this is the normal case rather than an edge one.
 await caller.room.swipe({
 	code,
 	userId: alice,
-	restaurantId: shared.id,
-	like: true,
+	verdicts: [
+		{ restaurantId: shared.id, like: true },
+		{ restaurantId: deck[1]!.id, like: false },
+	],
 });
 
 state = await caller.room.state({ code });
@@ -84,17 +102,27 @@ assert.equal(
 assert.equal(state.results, null, "votes leaked before results");
 
 // Bob finishes: yes on the first two cards.
-for (const [i, place] of deck.entries()) {
-	await caller.room.swipe({
-		code,
-		userId: bob,
-		restaurantId: place.id,
-		like: i < 2,
-	});
-}
+await caller.room.swipe({
+	code,
+	userId: bob,
+	verdicts: deck.map((place, i) => ({ restaurantId: place.id, like: i < 2 })),
+});
 
+// Everybody having swiped ends nothing: the round belongs to the clock and to
+// the host. Somebody arriving late must still be able to vote in the time left.
 state = await caller.room.state({ code });
-assert.equal(state.phase, "results", "round did not auto-reveal");
+assert.equal(
+	state.phase,
+	"swiping",
+	"a finished deck must not end the round on its own",
+);
+assert.ok(state.members.every((m) => m.done));
+assert.equal(state.results, null, "votes leaked before the round ended");
+
+// The host counts them.
+await caller.room.reveal({ code, userId: alice });
+state = await caller.room.state({ code });
+assert.equal(state.phase, "results");
 assert.ok(state.results);
 
 const ranked = state.results.ranked;
@@ -137,8 +165,7 @@ assert.ok(
 await caller.room.swipe({
 	code,
 	userId: alice,
-	restaurantId: after[0]!,
-	like: true,
+	verdicts: [{ restaurantId: after[0]!, like: true }],
 });
 await db.room.update({
 	where: { code },
@@ -162,14 +189,12 @@ const [first, second] = [tieDeck[0]!, tieDeck[1]!];
 await caller.room.swipe({
 	code,
 	userId: alice,
-	restaurantId: first.id,
-	like: true,
+	verdicts: [{ restaurantId: first.id, like: true }],
 });
 await caller.room.swipe({
 	code,
 	userId: bob,
-	restaurantId: second.id,
-	like: true,
+	verdicts: [{ restaurantId: second.id, like: true }],
 });
 await caller.room.reveal({ code, userId: alice });
 state = await caller.room.state({ code });
@@ -195,8 +220,7 @@ const afterTie = state.deck.map((p) => p.id);
 await caller.room.swipe({
 	code,
 	userId: alice,
-	restaurantId: afterTie[0]!,
-	like: true,
+	verdicts: [{ restaurantId: afterTie[0]!, like: true }],
 });
 
 // Ending the round early is the host's alone: Bob is a member in good standing

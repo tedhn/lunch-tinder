@@ -4,7 +4,7 @@ import { z } from "zod";
 import { env } from "~/env";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { normalizeCode, randomRoomCode, shuffle } from "~/server/lunch/deck";
-import { allDone, tallyRoom, toMemberViews } from "~/server/lunch/tally";
+import { tallyRoom, toMemberViews } from "~/server/lunch/tally";
 import {
 	CODE_LENGTH,
 	isRoomPhase,
@@ -26,14 +26,13 @@ const nameInput = z.string().trim().min(1).max(24);
 const identity = z.object({ code: codeInput, userId: userIdInput });
 
 /**
- * Any member may start or reset a round; ending one early is the host's.
+ * Any member may start or reset a round; counting the votes early is the host's.
  *
  * The asymmetry is deliberate. Starting and resetting are recoverable — press
- * again, shuffle again — but revealing early throws away votes nobody has cast
- * yet, and it only takes one impatient person to do that to five others. The
- * auto-reveal in `swipe` still fires for everyone once the last deck is
- * finished, so a host whose phone dies delays nothing that was going to
- * complete on its own.
+ * again, shuffle again — but counting early throws away votes nobody has cast
+ * yet, and it only takes one impatient person to do that to five others. A host
+ * whose phone dies costs nobody anything either: the deadline still lands, which
+ * is why it is a deadline and not a button.
  */
 async function requireMembership(
 	db: PrismaClient,
@@ -53,12 +52,12 @@ async function requireMembership(
 }
 
 /** Rooms opened before `host_id` existed default it to "", which no user id can
- * equal, so those rooms simply have no host and wait for auto-reveal. */
+ * equal, so those rooms have no host and simply run to their deadline. */
 function requireHost(room: Room, userId: string) {
 	if (room.hostId !== userId) {
 		throw new TRPCError({
 			code: "FORBIDDEN",
-			message: "Only whoever started the room can end the round early.",
+			message: "Only whoever started the room can count the votes early.",
 		});
 	}
 }
@@ -123,27 +122,24 @@ async function buildRoomView(db: PrismaClient, room: Room): Promise<RoomView> {
 
 	let phase = phaseOf(room);
 
-	// A read that also finishes the round, which is unusual enough to justify
-	// twice over.
+	// A read that also finishes the round, which is unusual enough to explain.
 	//
-	// The deadline is the first reason. Nothing schedules anything — no cron, no
-	// worker — so "the votes are counted at 12:40" has to become true when
-	// somebody looks. Every client polls this every 30s and refetches on
-	// Realtime, so in practice it closes within a second of expiring.
+	// A round ends two ways and two ways only: the deadline passes, or the host
+	// says so. Everyone having swiped is deliberately not one of them — a late
+	// arrival can still join and vote until the clock runs out, and the room gets
+	// the full ten minutes it was promised rather than however long the fastest
+	// swiper took.
 	//
-	// The second is auto-reveal. It normally fires from the last swipe, but only
-	// if the swipe completing the deck is the one that observes everybody
-	// finished. When it is not — a lost response, or a count that was wrong at
-	// the time — the room sits in "swiping" with every card swiped and no way for
-	// any client to advance it: no card left to swipe, nobody left to wait for.
-	// Checking here converges instead, and is idempotent either way.
+	// Which leaves the deadline needing something to notice it. Nothing here is
+	// scheduled — no cron, no worker — so "the votes are counted at 12:40" has to
+	// become true when somebody looks. Every client polls this every 30s and the
+	// countdown asks for a read the moment it hits zero, so in practice a round
+	// closes within a second of expiring. Idempotent, so concurrent readers
+	// racing to close the same room is fine.
 	const expired =
 		room.votingEndsAt !== null && room.votingEndsAt.getTime() <= Date.now();
 
-	if (
-		phase === "swiping" &&
-		(expired || allDone(members, room.deckIds.length))
-	) {
+	if (phase === "swiping" && expired) {
 		await db.room.update({
 			where: { code: room.code },
 			data: { phase: "results", lastActivity: new Date() },
@@ -335,18 +331,35 @@ export const roomRouter = createTRPCRouter({
 	}),
 
 	/**
-	 * Records one verdict. Swipes are idempotent per (room, user, card), so a
-	 * double-tap or a retried request cannot inflate a tally.
+	 * Records a batch of verdicts — normally a whole deck in one request.
 	 *
-	 * Note this deliberately does not touch `Room.lastActivity`: every swipe
-	 * already broadcasts a member row change, and a second broadcast per swipe
-	 * would double the refetches every client does.
+	 * The client holds swipes in memory and submits them together, so a round of
+	 * 20 cards costs one request rather than 20. The price is that nobody else
+	 * sees your progress until it lands, which is why the client also flushes what
+	 * it has when the tab is hidden and shortly before the deadline: votes living
+	 * only in a phone's memory are one lock-screen away from never existing.
+	 *
+	 * Idempotent per (room, user, card), so re-submitting a batch — or one that
+	 * overlaps an earlier flush — updates verdicts instead of inflating a tally.
+	 *
+	 * Note this deliberately does not touch `Room.lastActivity`: the member row
+	 * change already broadcasts, and a second broadcast would double every
+	 * client's refetches.
 	 */
 	swipe: publicProcedure
 		.input(
 			identity.extend({
-				restaurantId: z.string().min(1),
-				like: z.boolean(),
+				verdicts: z
+					.array(
+						z.object({
+							restaurantId: z.string().min(1),
+							like: z.boolean(),
+						}),
+					)
+					.min(1)
+					// A deck cannot exceed DECK_SIZE, so anything approaching this is a
+					// client bug or somebody poking at the endpoint by hand.
+					.max(200),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
@@ -356,49 +369,60 @@ export const roomRouter = createTRPCRouter({
 			if (phaseOf(room) !== "swiping") {
 				throw new TRPCError({
 					code: "PRECONDITION_FAILED",
-					message: "This round is not accepting swipes.",
+					// Worth being specific. With batching this is what somebody sees when
+					// their whole deck arrives after the votes were counted.
+					message: "The votes for this round have already been counted.",
 				});
 			}
-			if (!room.deckIds.includes(input.restaurantId)) {
+
+			const inDeck = new Set(room.deckIds);
+			// Last verdict per card wins, so a card somebody went back and changed
+			// their mind about does not arrive as two rows.
+			const verdicts = new Map<string, boolean>();
+			for (const v of input.verdicts) {
+				if (inDeck.has(v.restaurantId)) verdicts.set(v.restaurantId, v.like);
+			}
+
+			if (verdicts.size === 0) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
-					message: "That card is not in this room's deck.",
+					message: "None of those cards are in this room's deck.",
 				});
 			}
 
 			await ctx.db.$transaction(async (tx) => {
-				// Serialises this member's swipes against each other.
+				// Serialises this member's submissions against each other.
 				//
-				// Without the lock, two quick swipes race: under READ COMMITTED each
-				// transaction inserts its own row but counts without seeing the other's
-				// uncommitted one, so both compute the same total and the second write
-				// wins with a number one too low. That is how a member ends up parked
-				// at 19/20 with all 20 swipe rows present — visible to everyone, and
-				// unfixable from the UI because there is no card left to swipe. Taking
-				// the row lock first means the second transaction counts after the
-				// first has committed.
+				// Without the lock, two overlapping writes race: under READ COMMITTED
+				// each transaction inserts its own rows but counts without seeing the
+				// other's uncommitted ones, so both compute the same total and the
+				// second write lands one short. That is how a member ended up parked at
+				// 19/20 with all 20 swipe rows present — visible to everyone, and
+				// unfixable from the UI because there was no card left to swipe. Taking
+				// the row lock first means the second transaction counts after the first
+				// has committed.
 				await tx.$queryRaw`SELECT 1 FROM member WHERE room_code = ${room.code} AND user_id = ${input.userId} FOR UPDATE`;
 
-				await tx.swipe.upsert({
-					where: {
-						roomCode_userId_restaurantId: {
+				for (const [restaurantId, like] of verdicts) {
+					await tx.swipe.upsert({
+						where: {
+							roomCode_userId_restaurantId: {
+								roomCode: room.code,
+								userId: input.userId,
+								restaurantId,
+							},
+						},
+						create: {
 							roomCode: room.code,
 							userId: input.userId,
-							restaurantId: input.restaurantId,
+							restaurantId,
+							like,
 						},
-					},
-					create: {
-						roomCode: room.code,
-						userId: input.userId,
-						restaurantId: input.restaurantId,
-						like: input.like,
-					},
-					// A re-swipe of the same card updates the verdict rather than adding
-					// a second vote.
-					update: { like: input.like },
-				});
+						update: { like },
+					});
+				}
 
-				// Recounted rather than incremented, so duplicate or retried requests
+				// Recounted rather than incremented, so overlapping or retried batches
 				// converge on the true number.
 				const swipedCount = await tx.swipe.count({
 					where: { roomCode: room.code, userId: input.userId },
@@ -412,34 +436,15 @@ export const roomRouter = createTRPCRouter({
 				});
 			});
 
-			// Auto-reveal once everyone is through the deck, so the round does not
-			// wait on somebody remembering to press a button. Counted from the swipe
-			// rows for the same reason buildRoomView does: a stale cached count here
-			// would hold the whole room open on a deck that is actually finished.
-			const [stored, counts] = await Promise.all([
-				ctx.db.member.findMany({ where: { roomCode: room.code } }),
-				countsByMember(ctx.db, room.code),
-			]);
-			const members = stored.map((m) => ({
-				...m,
-				swipedCount: counts.get(m.userId) ?? 0,
-			}));
-
-			if (allDone(members, room.deckIds.length)) {
-				await ctx.db.room.update({
-					where: { code: room.code },
-					data: { phase: "results", lastActivity: new Date() },
-				});
-				return { phase: "results" as const };
-			}
-
-			return { phase: "swiping" as const };
+			// Finishing the deck ends nothing. The round runs to its deadline or until
+			// the host counts the votes, so this is just a submission.
+			return { recorded: verdicts.size };
 		}),
 
 	/**
-	 * Ends the round early, before everyone has finished their deck. Host only —
-	 * see requireHost. Auto-reveal in `swipe` still fires for anybody once the
-	 * last member is through the deck, so the host is a shortcut, not a gate.
+	 * Counts the votes now rather than at the deadline. Host only — see
+	 * requireHost. This and the clock running out are the only two ways a round
+	 * ends; nothing about everybody having finished their deck ends it.
 	 */
 	reveal: publicProcedure.input(identity).mutation(async ({ ctx, input }) => {
 		await requireMembership(ctx.db, input.code, input.userId);
