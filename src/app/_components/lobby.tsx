@@ -1,7 +1,11 @@
 "use client";
 
+import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Card } from "~/components/ui/card";
 import { api, type RouterOutputs } from "~/trpc/react";
 
 type RoomState = RouterOutputs["room"]["state"];
@@ -37,68 +41,83 @@ export function Lobby({
 		<main className="flex min-h-dvh flex-col px-6 py-10">
 			<div className="mx-auto flex w-full max-w-sm flex-1 flex-col">
 				<div className="text-center">
-					<p className="font-semibold text-white/40 text-xs uppercase tracking-widest">
+					<p className="font-semibold text-muted-foreground text-xs uppercase tracking-widest">
 						Room code
 					</p>
 					<p className="mt-1 font-black font-mono text-6xl tracking-[0.25em]">
 						{room.code}
 					</p>
-					<button
-						className="mt-4 rounded-full border border-white/15 px-5 py-2 font-semibold text-sm transition active:scale-95"
+					<Button
+						className="mt-4 h-10 rounded-full px-5 active:scale-95"
 						onClick={() => void share()}
-						type="button"
+						variant="outline"
 					>
 						{copied ? "Link copied" : "Share link"}
-					</button>
+					</Button>
 				</div>
 
 				<div className="mt-10 flex-1">
-					<p className="mb-3 font-semibold text-white/40 text-xs uppercase tracking-widest">
+					<p className="mb-3 font-semibold text-muted-foreground text-xs uppercase tracking-widest">
 						In the room · {room.members.length}
 					</p>
 					<ul className="space-y-2">
-						{room.members.map((m) => (
-							<li
-								className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
-								key={m.userId}
-							>
-								<span
-									className={`h-2 w-2 shrink-0 rounded-full ${
-										onlineIds.has(m.userId)
-											? "bg-[--color-mint]"
-											: "bg-white/25"
-									}`}
-								/>
-								<span className="font-semibold">{m.name}</span>
-								{m.userId === userId && (
-									<span className="text-white/40 text-xs">you</span>
-								)}
-								{m.userId === room.hostId && (
-									<span className="ml-auto rounded-full bg-white/10 px-2 py-0.5 font-bold text-[10px] uppercase tracking-wider">
-										host
-									</span>
-								)}
-							</li>
-						))}
+						{/* Members arrive over Realtime, so rows appear mid-view. `layout`
+						    lets the ones already on screen slide down rather than jump. */}
+						<AnimatePresence initial={false}>
+							{room.members.map((m) => (
+								<motion.li
+									animate={{ opacity: 1, y: 0 }}
+									exit={{ opacity: 0, x: -12 }}
+									initial={{ opacity: 0, y: -8 }}
+									key={m.userId}
+									layout
+									transition={{ type: "spring", stiffness: 400, damping: 32 }}
+								>
+									<Card
+										className="flex-row items-center gap-3 rounded-2xl bg-card px-4"
+										size="sm"
+									>
+										<span
+											className={`h-2 w-2 shrink-0 rounded-full ${
+												onlineIds.has(m.userId)
+													? "bg-[--color-teal]"
+													: "bg-muted-foreground/40"
+											}`}
+										/>
+										<span className="font-semibold">{m.name}</span>
+										{m.userId === userId && (
+											<span className="text-muted-foreground text-xs">you</span>
+										)}
+										{m.userId === room.hostId && (
+											<Badge
+												className="ml-auto font-bold text-[10px] uppercase tracking-wider"
+												variant="secondary"
+											>
+												host
+											</Badge>
+										)}
+									</Card>
+								</motion.li>
+							))}
+						</AnimatePresence>
 					</ul>
 				</div>
 
 				<div className="pt-8">
-					<button
-						className="w-full rounded-2xl bg-[--color-flame] px-4 py-4 font-bold text-[--color-ink] text-lg transition active:scale-[0.98] disabled:opacity-40"
+					<Button
+						className="h-14 w-full rounded-2xl text-lg active:scale-[0.98]"
 						disabled={start.isPending}
 						onClick={() => start.mutate({ code: room.code, userId })}
-						type="button"
 					>
 						{start.isPending
 							? "Shuffling…"
 							: `Start swiping · ${room.deckSize} spots`}
-					</button>
-					<p className="mt-3 text-center text-white/35 text-xs">
+					</Button>
+					<p className="mt-3 text-center text-muted-foreground text-xs">
 						Anyone can start. Latecomers can still join mid-round.
 					</p>
 					{start.error && (
-						<p className="mt-4 rounded-xl bg-red-500/10 px-4 py-3 text-red-300 text-sm">
+						<p className="mt-4 rounded-xl bg-destructive/10 px-4 py-3 text-destructive text-sm">
 							{start.error.message}
 						</p>
 					)}

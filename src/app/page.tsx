@@ -7,7 +7,7 @@ export default function HomePage() {
 				<div className="mb-10 text-center">
 					<div className="mb-3 text-6xl">🍜</div>
 					<h1 className="font-black text-4xl tracking-tight">Lunch Tinder</h1>
-					<p className="mt-2 text-sm text-white/60">
+					<p className="mt-2 text-muted-foreground text-sm">
 						Everyone swipes. Nobody argues. Lunch happens.
 					</p>
 				</div>

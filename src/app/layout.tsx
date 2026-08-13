@@ -12,7 +12,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-	themeColor: "#1a1014",
+	// Matches the top of the page gradient, so the phone's status bar blends
+	// into the app rather than banding against it.
+	themeColor: "#ffe4d6",
 	// The deck is a drag gesture; a double-tap zoom in the middle of it is noise.
 	maximumScale: 1,
 };

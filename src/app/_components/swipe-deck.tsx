@@ -9,6 +9,9 @@ import {
 } from "motion/react";
 import { useState } from "react";
 
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Card } from "~/components/ui/card";
 import { api, type RouterOutputs } from "~/trpc/react";
 
 type RoomState = RouterOutputs["room"]["state"];
@@ -70,29 +73,29 @@ export function SwipeDeck({
 			<div className="mx-auto flex w-full max-w-sm flex-1 flex-col">
 				<header className="mb-4">
 					<div className="mb-3 flex items-baseline justify-between">
-						<span className="font-mono text-white/40 text-xs tracking-widest">
+						<span className="font-mono text-muted-foreground text-xs tracking-widest">
 							{room.code}
 						</span>
-						<span className="text-white/40 text-xs">
+						<span className="text-muted-foreground text-xs">
 							{Math.min(index, room.deckSize)} / {room.deckSize}
 						</span>
 					</div>
-					<div className="h-1 overflow-hidden rounded-full bg-white/10">
+					<div className="h-1 overflow-hidden rounded-full bg-muted">
 						<motion.div
 							animate={{
 								width: `${(Math.min(index, room.deckSize) / Math.max(room.deckSize, 1)) * 100}%`,
 							}}
-							className="h-full bg-[--color-ember]"
+							className="h-full bg-[--color-blush]"
 							transition={{ type: "spring", stiffness: 200, damping: 30 }}
 						/>
 					</div>
 					{others.length > 0 && (
-						<div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/35">
+						<div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
 							{others.map((m) => (
 								<span key={m.userId}>
 									<span
 										className={
-											onlineIds.has(m.userId) ? "text-white/60" : undefined
+											onlineIds.has(m.userId) ? "text-foreground" : undefined
 										}
 									>
 										{m.name}
@@ -141,22 +144,21 @@ export function SwipeDeck({
 
 				{top && (
 					<div className="mt-6 flex items-center justify-center gap-6">
-						<button
+						<Button
 							aria-label="Pass"
-							className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-white/15 text-2xl transition active:scale-90"
+							className="size-16 rounded-full border-2 text-2xl active:scale-90"
 							onClick={() => decide(top, false)}
-							type="button"
+							variant="outline"
 						>
 							✕
-						</button>
-						<button
+						</Button>
+						<Button
 							aria-label="Like"
-							className="flex h-20 w-20 items-center justify-center rounded-full bg-[--color-flame] text-3xl text-[--color-ink] transition active:scale-90"
+							className="size-20 rounded-full text-3xl active:scale-90"
 							onClick={() => decide(top, true)}
-							type="button"
 						>
 							♥
-						</button>
+						</Button>
 					</div>
 				)}
 			</div>
@@ -202,13 +204,13 @@ function TopCard({
 		>
 			<CardFace place={place}>
 				<motion.span
-					className="absolute top-6 left-6 rotate-[-12deg] rounded-xl border-4 border-[--color-mint] px-3 py-1 font-black text-2xl text-[--color-mint]"
+					className="absolute top-6 left-6 rotate-[-12deg] rounded-xl border-4 border-[--color-teal-deep] px-3 py-1 font-black text-2xl text-[--color-teal-deep]"
 					style={{ opacity: likeOpacity }}
 				>
 					YES
 				</motion.span>
 				<motion.span
-					className="absolute top-6 right-6 rotate-[12deg] rounded-xl border-4 border-white/60 px-3 py-1 font-black text-2xl text-white/60"
+					className="absolute top-6 right-6 rotate-[12deg] rounded-xl border-4 border-foreground/40 px-3 py-1 font-black text-2xl text-foreground/40"
 					style={{ opacity: passOpacity }}
 				>
 					NAH
@@ -231,26 +233,39 @@ function CardFace({
 	// rather than a broken-image icon.
 	const [broken, setBroken] = useState(false);
 	const googlePhoto = !place.imageUrl && place.placeId !== null && !broken;
+	const hasPhoto = Boolean(place.imageUrl) || googlePhoto;
 	const src = place.imageUrl ?? `/api/place-photo/${place.id}`;
 
+	// A photo card carries its own scrim and reads white; a photoless one is an
+	// ordinary light card. Type colour has to follow that, so it is picked once
+	// here rather than repeated on every line below.
+	const title = hasPhoto ? "text-white" : "text-foreground";
+	const sub = hasPhoto ? "text-white/70" : "text-muted-foreground";
+
 	return (
-		<div className="relative flex h-full w-full select-none flex-col justify-end overflow-hidden rounded-[28px] border border-white/10 bg-[--color-ink-soft] p-6">
-			{place.imageUrl || googlePhoto ? (
+		<Card
+			className={`relative h-full w-full select-none justify-end gap-0 overflow-hidden rounded-[28px] p-6 ${
+				hasPhoto ? "bg-[--color-ink]" : ""
+			}`}
+		>
+			{hasPhoto ? (
 				// Arbitrary remote hosts, so plain <img> rather than next/image and its
 				// domain allowlist. Cards are one-screen-sized and short-lived.
 				// biome-ignore lint/performance/noImgElement: hosts are arbitrary
 				<img
 					alt=""
-					className="absolute inset-0 h-full w-full object-cover opacity-60"
+					className="absolute inset-0 h-full w-full object-cover"
 					onError={() => setBroken(true)}
 					src={src}
 				/>
 			) : (
-				<div className="absolute inset-0 flex items-center justify-center text-[9rem] opacity-25">
+				<div className="absolute inset-0 flex items-center justify-center text-[9rem] opacity-15">
 					{place.emoji}
 				</div>
 			)}
-			<div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/85 to-transparent" />
+			{hasPhoto && (
+				<div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/85 to-transparent" />
+			)}
 
 			{/* Attribution is a condition of using Places photos, so it is tied to
 			    the same flag that renders one. */}
@@ -261,37 +276,52 @@ function CardFace({
 			)}
 
 			<div className="relative">
-				<p className="font-semibold text-[--color-ember] text-xs uppercase tracking-widest">
+				<p
+					className={`font-semibold text-xs uppercase tracking-widest ${
+						hasPhoto ? "text-[--color-blush]" : "text-[--color-rose-deep]"
+					}`}
+				>
 					{place.cuisine}
 				</p>
-				<h2 className="mt-1 font-black text-3xl leading-tight">{place.name}</h2>
-				<p className="mt-2 text-sm text-white/60">
+				<h2 className={`mt-1 font-black text-3xl leading-tight ${title}`}>
+					{place.name}
+				</h2>
+				<p className={`mt-2 text-sm ${sub}`}>
 					{"$".repeat(place.priceLevel)} · {place.walkMinutes} min walk
 				</p>
 				{/* Only `true` shows a badge. `null` means nobody has verified this
 				    shop, and a "not halal" badge on an unchecked spot would be a
 				    claim the data does not support. */}
 				{place.halal === true && (
-					<p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 font-semibold text-[11px] text-emerald-300">
+					<Badge
+						className={`mt-2 font-semibold ${
+							hasPhoto
+								? "bg-[--color-teal]/20 text-[--color-teal]"
+								: "bg-[--color-teal]/15 text-[--color-teal-deep]"
+						}`}
+					>
 						☪ Halal
-					</p>
+					</Badge>
 				)}
 				{place.tags.length > 0 && (
 					<div className="mt-3 flex flex-wrap gap-1.5">
 						{place.tags.map((tag) => (
-							<span
-								className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/70"
+							<Badge
+								className={
+									hasPhoto ? "bg-white/15 text-white/80" : "text-foreground/70"
+								}
 								key={tag}
+								variant={hasPhoto ? "default" : "secondary"}
 							>
 								{tag}
-							</span>
+							</Badge>
 						))}
 					</div>
 				)}
 			</div>
 
 			{children}
-		</div>
+		</Card>
 	);
 }
 
@@ -308,22 +338,28 @@ function WaitingForOthers({
 
 	return (
 		<div className="flex h-full flex-col items-center justify-center text-center">
-			<div className="text-5xl">⏳</div>
+			<motion.div
+				animate={{ rotate: [0, 12, -12, 0] }}
+				className="text-5xl"
+				transition={{ duration: 2.4, repeat: Number.POSITIVE_INFINITY }}
+			>
+				⏳
+			</motion.div>
 			<p className="mt-4 font-bold text-lg">That's your lot</p>
-			<p className="mt-1 text-sm text-white/50">
+			<p className="mt-1 text-muted-foreground text-sm">
 				{waiting.length === 0
 					? "Counting the votes…"
 					: `Waiting on ${waiting.map((m) => m.name).join(", ")}`}
 			</p>
 			{waiting.length > 0 && (
-				<button
-					className="mt-8 rounded-2xl border border-white/15 px-5 py-3 font-bold text-sm transition active:scale-95 disabled:opacity-40"
+				<Button
+					className="mt-8 h-12 rounded-2xl px-5 font-bold active:scale-95"
 					disabled={pending}
 					onClick={onReveal}
-					type="button"
+					variant="outline"
 				>
 					{pending ? "Revealing…" : "Reveal without them"}
-				</button>
+				</Button>
 			)}
 		</div>
 	);

@@ -9,11 +9,29 @@
 		var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
 		"Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 
-	--color-ink: #1a1014;
-	--color-ink-soft: #2a1b21;
-	--color-flame: #ff5c5c;
-	--color-ember: #ffb347;
-	--color-mint: #4ade80;
+	/* Palette: colorhunt.co/palette/fcf9eabadfdbffa4a4ffbdbd
+	   All four are pale, which is the whole character of it — but it also means
+	   none of them can carry text on their own. They are used as fills and
+	   surfaces, with ink on top. */
+	--color-cream: #fcf9ea;
+	--color-teal: #badfdb;
+	--color-salmon: #ffa4a4;
+	--color-blush: #ffbdbd;
+
+	/* Cards are plain white so they read as raised against the cream page. */
+	--color-cream-soft: #ffffff;
+
+	/* Ink is type, not background — the app runs light. `ink` is warmed slightly
+	   towards the cream so black type does not look pasted on; `ink-soft` is the
+	   scrim behind a photo card's text. */
+	--color-ink: #2b2a24;
+	--color-ink-soft: #1e1d19;
+
+	/* Darkened salmon and teal, for the cases where the palette colour has to be
+	   the *text* — a label or a stamp on cream. The pale originals sit around
+	   1.4:1 there, which is unreadable; these clear 5:1. */
+	--color-rose-deep: #a14a4a;
+	--color-teal-deep: #2c6e68;
 }
 
 html,
@@ -22,10 +40,12 @@ body {
 }
 
 body {
+	/* Blush at the top fading into cream — the two warm ends of the palette,
+	   with teal held back for success states so it stays meaningful. */
 	background:
-		radial-gradient(120% 80% at 50% 0%, #33202a 0%, transparent 60%),
-		var(--color-ink);
-	color: #f7ecec;
+		radial-gradient(120% 80% at 50% 0%, var(--color-blush) 0%, transparent 55%),
+		var(--color-cream);
+	color: var(--color-ink);
 	-webkit-tap-highlight-color: transparent;
 }
 
@@ -37,228 +57,181 @@ body {
 }
 
 @theme inline {
+	/* `--font-sans` is defined in the `@theme` block above and must not be
+	   redeclared here. `@theme inline` emits the value verbatim, so a
+	   `--font-sans: var(--font-sans)` line resolves to itself — a circular
+	   reference, which browsers drop, leaving every `font-sans` element on the
+	   default serif. Headings share the one sans stack on purpose. */
 	--font-heading:
-		var(--font-sans);
-	--font-sans:
-		var(--font-sans);
-	--color-sidebar-ring:
-		var(--sidebar-ring);
-	--color-sidebar-border:
-		var(--sidebar-border);
-	--color-sidebar-accent-foreground:
-		var(--sidebar-accent-foreground);
-	--color-sidebar-accent:
-		var(--sidebar-accent);
-	--color-sidebar-primary-foreground:
-		var(--sidebar-primary-foreground);
-	--color-sidebar-primary:
-		var(--sidebar-primary);
-	--color-sidebar-foreground:
-		var(--sidebar-foreground);
-	--color-sidebar:
-		var(--sidebar);
-	--color-chart-5:
-		var(--chart-5);
-	--color-chart-4:
-		var(--chart-4);
-	--color-chart-3:
-		var(--chart-3);
-	--color-chart-2:
-		var(--chart-2);
-	--color-chart-1:
-		var(--chart-1);
-	--color-ring:
-		var(--ring);
-	--color-input:
-		var(--input);
-	--color-border:
-		var(--border);
-	--color-destructive:
-		var(--destructive);
-	--color-accent-foreground:
-		var(--accent-foreground);
-	--color-accent:
-		var(--accent);
-	--color-muted-foreground:
-		var(--muted-foreground);
-	--color-muted:
-		var(--muted);
-	--color-secondary-foreground:
-		var(--secondary-foreground);
-	--color-secondary:
-		var(--secondary);
-	--color-primary-foreground:
-		var(--primary-foreground);
-	--color-primary:
-		var(--primary);
-	--color-popover-foreground:
-		var(--popover-foreground);
-	--color-popover:
-		var(--popover);
-	--color-card-foreground:
-		var(--card-foreground);
-	--color-card:
-		var(--card);
-	--color-foreground:
-		var(--foreground);
-	--color-background:
-		var(--background);
-	--radius-sm:
-		calc(var(--radius) * 0.6);
-	--radius-md:
-		calc(var(--radius) * 0.8);
-	--radius-lg:
-		var(--radius);
-	--radius-xl:
-		calc(var(--radius) * 1.4);
-	--radius-2xl:
-		calc(var(--radius) * 1.8);
-	--radius-3xl:
-		calc(var(--radius) * 2.2);
-	--radius-4xl:
-		calc(var(--radius) * 2.6);
+		var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+		"Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+	--color-sidebar-ring: var(--sidebar-ring);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar: var(--sidebar);
+	--color-chart-5: var(--chart-5);
+	--color-chart-4: var(--chart-4);
+	--color-chart-3: var(--chart-3);
+	--color-chart-2: var(--chart-2);
+	--color-chart-1: var(--chart-1);
+	--color-ring: var(--ring);
+	--color-input: var(--input);
+	--color-border: var(--border);
+	--color-destructive: var(--destructive);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-accent: var(--accent);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-muted: var(--muted);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-secondary: var(--secondary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-primary: var(--primary);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-popover: var(--popover);
+	--color-card-foreground: var(--card-foreground);
+	--color-card: var(--card);
+	--color-foreground: var(--foreground);
+	--color-background: var(--background);
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.2);
+	--radius-4xl: calc(var(--radius) * 2.6);
 }
 
 :root {
-	--background:
-		oklch(1 0 0);
-	--foreground:
-		oklch(0.145 0 0);
-	--card:
-		oklch(1 0 0);
-	--card-foreground:
-		oklch(0.145 0 0);
-	--popover:
-		oklch(1 0 0);
-	--popover-foreground:
-		oklch(0.145 0 0);
-	--primary:
-		oklch(0.205 0 0);
-	--primary-foreground:
-		oklch(0.985 0 0);
-	--secondary:
-		oklch(0.97 0 0);
-	--secondary-foreground:
-		oklch(0.205 0 0);
-	--muted:
-		oklch(0.97 0 0);
-	--muted-foreground:
-		oklch(0.556 0 0);
-	--accent:
-		oklch(0.97 0 0);
-	--accent-foreground:
-		oklch(0.205 0 0);
-	--destructive:
-		oklch(0.577 0.245 27.325);
-	--border:
-		oklch(0.922 0 0);
-	--input:
-		oklch(0.922 0 0);
-	--ring:
-		oklch(0.708 0 0);
-	--chart-1:
-		oklch(0.87 0 0);
-	--chart-2:
-		oklch(0.556 0 0);
-	--chart-3:
-		oklch(0.439 0 0);
-	--chart-4:
-		oklch(0.371 0 0);
-	--chart-5:
-		oklch(0.269 0 0);
-	--radius:
-		0.625rem;
-	--sidebar:
-		oklch(0.985 0 0);
-	--sidebar-foreground:
-		oklch(0.145 0 0);
-	--sidebar-primary:
-		oklch(0.205 0 0);
-	--sidebar-primary-foreground:
-		oklch(0.985 0 0);
-	--sidebar-accent:
-		oklch(0.97 0 0);
-	--sidebar-accent-foreground:
-		oklch(0.205 0 0);
-	--sidebar-border:
-		oklch(0.922 0 0);
-	--sidebar-ring:
-		oklch(0.708 0 0);
+	--background: oklch(1 0 0);
+	--foreground: oklch(0.145 0 0);
+	--card: oklch(1 0 0);
+	--card-foreground: oklch(0.145 0 0);
+	--popover: oklch(1 0 0);
+	--popover-foreground: oklch(0.145 0 0);
+	--primary: oklch(0.205 0 0);
+	--primary-foreground: oklch(0.985 0 0);
+	--secondary: oklch(0.97 0 0);
+	--secondary-foreground: oklch(0.205 0 0);
+	--muted: oklch(0.97 0 0);
+	--muted-foreground: oklch(0.556 0 0);
+	--accent: oklch(0.97 0 0);
+	--accent-foreground: oklch(0.205 0 0);
+	--destructive: oklch(0.577 0.245 27.325);
+	--border: oklch(0.922 0 0);
+	--input: oklch(0.922 0 0);
+	--ring: oklch(0.708 0 0);
+	--chart-1: oklch(0.87 0 0);
+	--chart-2: oklch(0.556 0 0);
+	--chart-3: oklch(0.439 0 0);
+	--chart-4: oklch(0.371 0 0);
+	--chart-5: oklch(0.269 0 0);
+	--radius: 0.625rem;
+	--sidebar: oklch(0.985 0 0);
+	--sidebar-foreground: oklch(0.145 0 0);
+	--sidebar-primary: oklch(0.205 0 0);
+	--sidebar-primary-foreground: oklch(0.985 0 0);
+	--sidebar-accent: oklch(0.97 0 0);
+	--sidebar-accent-foreground: oklch(0.205 0 0);
+	--sidebar-border: oklch(0.922 0 0);
+	--sidebar-ring: oklch(0.708 0 0);
 }
 
 .dark {
-	--background:
-		oklch(0.145 0 0);
-	--foreground:
-		oklch(0.985 0 0);
-	--card:
-		oklch(0.205 0 0);
-	--card-foreground:
-		oklch(0.985 0 0);
-	--popover:
-		oklch(0.205 0 0);
-	--popover-foreground:
-		oklch(0.985 0 0);
-	--primary:
-		oklch(0.922 0 0);
-	--primary-foreground:
-		oklch(0.205 0 0);
-	--secondary:
-		oklch(0.269 0 0);
-	--secondary-foreground:
-		oklch(0.985 0 0);
-	--muted:
-		oklch(0.269 0 0);
-	--muted-foreground:
-		oklch(0.708 0 0);
-	--accent:
-		oklch(0.269 0 0);
-	--accent-foreground:
-		oklch(0.985 0 0);
-	--destructive:
-		oklch(0.704 0.191 22.216);
-	--border:
-		oklch(1 0 0 / 10%);
-	--input:
-		oklch(1 0 0 / 15%);
-	--ring:
-		oklch(0.556 0 0);
-	--chart-1:
-		oklch(0.87 0 0);
-	--chart-2:
-		oklch(0.556 0 0);
-	--chart-3:
-		oklch(0.439 0 0);
-	--chart-4:
-		oklch(0.371 0 0);
-	--chart-5:
-		oklch(0.269 0 0);
-	--sidebar:
-		oklch(0.205 0 0);
-	--sidebar-foreground:
-		oklch(0.985 0 0);
-	--sidebar-primary:
-		oklch(0.488 0.243 264.376);
-	--sidebar-primary-foreground:
-		oklch(0.985 0 0);
-	--sidebar-accent:
-		oklch(0.269 0 0);
-	--sidebar-accent-foreground:
-		oklch(0.985 0 0);
-	--sidebar-border:
-		oklch(1 0 0 / 10%);
-	--sidebar-ring:
-		oklch(0.556 0 0);
+	--background: oklch(0.145 0 0);
+	--foreground: oklch(0.985 0 0);
+	--card: oklch(0.205 0 0);
+	--card-foreground: oklch(0.985 0 0);
+	--popover: oklch(0.205 0 0);
+	--popover-foreground: oklch(0.985 0 0);
+	--primary: oklch(0.922 0 0);
+	--primary-foreground: oklch(0.205 0 0);
+	--secondary: oklch(0.269 0 0);
+	--secondary-foreground: oklch(0.985 0 0);
+	--muted: oklch(0.269 0 0);
+	--muted-foreground: oklch(0.708 0 0);
+	--accent: oklch(0.269 0 0);
+	--accent-foreground: oklch(0.985 0 0);
+	--destructive: oklch(0.704 0.191 22.216);
+	--border: oklch(1 0 0 / 10%);
+	--input: oklch(1 0 0 / 15%);
+	--ring: oklch(0.556 0 0);
+	--chart-1: oklch(0.87 0 0);
+	--chart-2: oklch(0.556 0 0);
+	--chart-3: oklch(0.439 0 0);
+	--chart-4: oklch(0.371 0 0);
+	--chart-5: oklch(0.269 0 0);
+	--sidebar: oklch(0.205 0 0);
+	--sidebar-foreground: oklch(0.985 0 0);
+	--sidebar-primary: oklch(0.488 0.243 264.376);
+	--sidebar-primary-foreground: oklch(0.985 0 0);
+	--sidebar-accent: oklch(0.269 0 0);
+	--sidebar-accent-foreground: oklch(0.985 0 0);
+	--sidebar-border: oklch(1 0 0 / 10%);
+	--sidebar-ring: oklch(0.556 0 0);
+}
+
+/*
+ * shadcn's tokens, repointed at this app's palette.
+ *
+ * The generated `:root` above is shadcn's neutral grey scale and `.dark` is its
+ * dark counterpart. This app has no theme switch — it is a warm cream light
+ * theme — so the tokens are overridden here in terms of the `--color-*` values
+ * at the top of this file. Every shadcn component (Button, Card, Badge, Input)
+ * then lands in the app's palette by default, and `bunx shadcn add` can still
+ * overwrite the blocks above without clobbering this one.
+ *
+ * Alpha-carrying tokens stay in `oklch(… / n%)` form because Tailwind's
+ * modifier syntax (`bg-card/50`, `ring-foreground/10`) needs a real colour to
+ * mix, not a hex string.
+ */
+:root {
+	--radius: 1rem;
+
+	--background: var(--color-cream);
+	--foreground: var(--color-ink);
+
+	/* Cards are plain white against the cream page — enough separation without
+	   a border doing the work. */
+	--card: var(--color-cream-soft);
+	--card-foreground: var(--color-ink);
+	--popover: var(--color-cream-soft);
+	--popover-foreground: var(--color-ink);
+
+	/* Salmon is the app's one call-to-action colour: start a room, swipe right,
+	   go again. Ink type on it, never white — at this lightness white type on
+	   salmon is around 2:1. */
+	--primary: var(--color-salmon);
+	--primary-foreground: var(--color-ink);
+
+	--secondary: var(--color-blush);
+	--secondary-foreground: var(--color-ink);
+	--muted: oklch(0.96 0.018 90);
+	/* Deliberately mid-dark rather than pale grey: this carries most of the
+	   secondary copy in the app, and pale-on-cream is where light themes
+	   usually stop being readable outdoors. */
+	--muted-foreground: oklch(0.5 0.015 75);
+	--accent: var(--color-teal);
+	--accent-foreground: var(--color-ink);
+
+	--destructive: oklch(0.52 0.19 25);
+
+	--border: oklch(0.25 0.02 75 / 14%);
+	--input: oklch(0.25 0.02 75 / 20%);
+	--ring: var(--color-rose-deep);
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+	* {
+		@apply border-border outline-ring/50;
 	}
-  body {
-    @apply bg-background text-foreground;
+	body {
+		@apply bg-background text-foreground;
 	}
-  html {
-    @apply font-sans;
+	html {
+		@apply font-sans;
 	}
 }
