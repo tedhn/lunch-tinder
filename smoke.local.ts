@@ -13,18 +13,14 @@ console.log("created room", code);
 
 await caller.room.join({ code, userId: bob, name: "Bob" });
 
+// A new room is swiping from the moment it exists: no waiting room, and a
+// joiner starts on their own without anybody pressing start.
 let state = await caller.room.state({ code });
-assert.equal(state.phase, "lobby");
+assert.equal(state.phase, "swiping");
 assert.equal(state.members.length, 2);
-assert.equal(state.deck.length, 0, "lobby must not ship card data");
+assert.equal(state.deck.length, state.deckSize);
 assert.equal(state.results, null);
 assert.equal(state.hostId, alice);
-
-// Anyone may start, not only the host.
-await caller.room.start({ code, userId: bob });
-state = await caller.room.state({ code });
-assert.equal(state.phase, "swiping");
-assert.equal(state.deck.length, state.deckSize);
 console.log("deck size", state.deckSize);
 
 const deck = state.deck;
@@ -115,17 +111,16 @@ assert.equal(ranked[1]!.likes, 1, "Bob's second pick should be the runner-up");
 assert.equal(ranked[1]!.unanimous, false);
 assert.equal(ranked.at(-1)!.likes, 0);
 
-// Reset keeps the crew, drops the votes, reshuffles.
+// Reset keeps the crew, drops the votes, reshuffles — and goes straight back to
+// swiping rather than parking the room in a lobby nobody can leave.
 const before = state.deck.map((p) => p.id);
 await caller.room.reset({ code, userId: alice });
 state = await caller.room.state({ code });
-assert.equal(state.phase, "lobby");
+assert.equal(state.phase, "swiping");
 assert.equal(state.members.length, 2);
 assert.ok(state.members.every((m) => m.swipedCount === 0));
 assert.equal(await db.swipe.count({ where: { roomCode: code } }), 0);
 
-await caller.room.start({ code, userId: alice });
-state = await caller.room.state({ code });
 const after = state.deck.map((p) => p.id);
 assert.notDeepEqual(after, before, "reset should reshuffle the deck");
 
@@ -136,6 +131,20 @@ await caller.room.swipe({
 	restaurantId: after[0]!,
 	like: true,
 });
+
+// Ending the round early is the host's alone: Bob is a member in good standing
+// and still cannot throw away votes the others have not cast.
+await assert.rejects(
+	() => caller.room.reveal({ code, userId: bob }),
+	/Only whoever started the room/,
+);
+state = await caller.room.state({ code });
+assert.equal(
+	state.phase,
+	"swiping",
+	"a non-host reveal must not end the round",
+);
+
 await caller.room.reveal({ code, userId: alice });
 state = await caller.room.state({ code });
 assert.equal(state.phase, "results");

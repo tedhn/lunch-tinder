@@ -26,10 +26,14 @@ const nameInput = z.string().trim().min(1).max(24);
 const identity = z.object({ code: codeInput, userId: userIdInput });
 
 /**
- * Any member may start, reveal or reset. `hostId` is only a lobby badge for
- * whoever opened the room: with three people and one lunch hour, a host whose
- * phone died stranding everyone else is a worse failure than someone else
- * pressing start.
+ * Any member may start or reset a round; ending one early is the host's.
+ *
+ * The asymmetry is deliberate. Starting and resetting are recoverable — press
+ * again, shuffle again — but revealing early throws away votes nobody has cast
+ * yet, and it only takes one impatient person to do that to five others. The
+ * auto-reveal in `swipe` still fires for everyone once the last deck is
+ * finished, so a host whose phone dies delays nothing that was going to
+ * complete on its own.
  */
 async function requireMembership(
 	db: PrismaClient,
@@ -46,6 +50,17 @@ async function requireMembership(
 		});
 	}
 	return member;
+}
+
+/** Rooms opened before `host_id` existed default it to "", which no user id can
+ * equal, so those rooms simply have no host and wait for auto-reveal. */
+function requireHost(room: Room, userId: string) {
+	if (room.hostId !== userId) {
+		throw new TRPCError({
+			code: "FORBIDDEN",
+			message: "Only whoever started the room can end the round early.",
+		});
+	}
 }
 
 async function requireRoom(db: PrismaClient, code: string): Promise<Room> {
@@ -110,7 +125,16 @@ async function buildRoomView(db: PrismaClient, room: Room): Promise<RoomView> {
 }
 
 export const roomRouter = createTRPCRouter({
-	/** Opens a room with a frozen, shuffled deck and the caller as first member. */
+	/**
+	 * Opens a room with a frozen, shuffled deck and the caller as first member,
+	 * already swiping.
+	 *
+	 * There is no waiting room. Lunch decisions are made by people who are
+	 * already hungry, and a screen that says "waiting for others" before anybody
+	 * can do anything is a screen where somebody gives up and suggests the usual
+	 * place. Everyone swipes their own copy of the same frozen deck whenever they
+	 * arrive; the round is decided by the tally, not by starting together.
+	 */
 	create: publicProcedure
 		.input(z.object({ userId: userIdInput, name: nameInput }))
 		.mutation(async ({ ctx, input }) => {
@@ -140,7 +164,7 @@ export const roomRouter = createTRPCRouter({
 						data: {
 							code,
 							hostId: input.userId,
-							phase: "lobby",
+							phase: "swiping",
 							deckIds,
 							members: {
 								create: { userId: input.userId, name: input.name },
@@ -169,8 +193,8 @@ export const roomRouter = createTRPCRouter({
 
 	/**
 	 * Upsert by userId, so a phone that locks and reconnects resumes as the same
-	 * member instead of appearing twice. Late joiners are allowed mid-round —
-	 * they simply have more cards left than everybody else.
+	 * member instead of appearing twice. Joining mid-round is normal, not an edge
+	 * case — a late arrival simply has more cards left than everybody else.
 	 */
 	join: publicProcedure
 		.input(z.object({ code: codeInput, userId: userIdInput, name: nameInput }))
@@ -189,12 +213,17 @@ export const roomRouter = createTRPCRouter({
 				update: { name: input.name },
 			});
 
+			// Rooms opened before the waiting room was removed can still be sitting
+			// in "lobby". Whoever arrives next moves them along, so nobody lands on a
+			// screen whose only button is gone.
+			const phase = phaseOf(room) === "lobby" ? "swiping" : phaseOf(room);
+
 			await ctx.db.room.update({
 				where: { code: room.code },
-				data: { lastActivity: new Date() },
+				data: { phase, lastActivity: new Date() },
 			});
 
-			return { code: room.code, phase: phaseOf(room) };
+			return { code: room.code, phase };
 		}),
 
 	/**
@@ -208,6 +237,11 @@ export const roomRouter = createTRPCRouter({
 			return buildRoomView(ctx.db, room);
 		}),
 
+	/**
+	 * Moves a room out of "lobby". Nothing creates a lobby room any more — rooms
+	 * open straight into swiping — so this exists for rooms created before that
+	 * change, and `reset` still routes through the phase it sets.
+	 */
 	start: publicProcedure.input(identity).mutation(async ({ ctx, input }) => {
 		await requireMembership(ctx.db, input.code, input.userId);
 		const room = await requireRoom(ctx.db, input.code);
@@ -304,10 +338,15 @@ export const roomRouter = createTRPCRouter({
 			return { phase: "swiping" as const };
 		}),
 
-	/** Ends the round early — for when half the office has already wandered off. */
+	/**
+	 * Ends the round early, before everyone has finished their deck. Host only —
+	 * see requireHost. Auto-reveal in `swipe` still fires for anybody once the
+	 * last member is through the deck, so the host is a shortcut, not a gate.
+	 */
 	reveal: publicProcedure.input(identity).mutation(async ({ ctx, input }) => {
 		await requireMembership(ctx.db, input.code, input.userId);
 		const room = await requireRoom(ctx.db, input.code);
+		requireHost(room, input.userId);
 
 		const revealed = await ctx.db.room.update({
 			where: { code: room.code },
@@ -316,7 +355,7 @@ export const roomRouter = createTRPCRouter({
 		return buildRoomView(ctx.db, revealed);
 	}),
 
-	/** Same members, fresh deck order, votes wiped. Back to the lobby. */
+	/** Same members, fresh deck order, votes wiped, swiping again immediately. */
 	reset: publicProcedure.input(identity).mutation(async ({ ctx, input }) => {
 		await requireMembership(ctx.db, input.code, input.userId);
 		const room = await requireRoom(ctx.db, input.code);
@@ -339,7 +378,10 @@ export const roomRouter = createTRPCRouter({
 			}),
 			ctx.db.room.update({
 				where: { code: room.code },
-				data: { phase: "lobby", deckIds, lastActivity: new Date() },
+				// Straight back to swiping, not to a lobby: there is no waiting-room
+				// screen left to press a button on, so a reset that parked the room in
+				// "lobby" would leave everyone looking at a deck nobody can advance.
+				data: { phase: "swiping", deckIds, lastActivity: new Date() },
 			}),
 		]);
 

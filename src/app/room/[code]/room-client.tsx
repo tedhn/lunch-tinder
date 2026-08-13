@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { Lobby } from "~/app/_components/lobby";
 import { Results } from "~/app/_components/results";
 import { SwipeDeck } from "~/app/_components/swipe-deck";
 import { Button } from "~/components/ui/button";
@@ -117,15 +116,13 @@ export function RoomClient({ code }: { code: string }) {
 		);
 	}
 
-	if (room.phase === "lobby") {
-		return <Lobby onlineIds={onlineIds} room={room} userId={userId} />;
+	if (room.phase === "results") {
+		return <Results room={room} userId={userId} />;
 	}
 
-	if (room.phase === "swiping") {
-		return <SwipeDeck onlineIds={onlineIds} room={room} userId={userId} />;
-	}
-
-	return <Results room={room} userId={userId} />;
+	// "lobby" only survives on rooms created before the waiting room was removed;
+	// `join` promotes them, and the deck is what both phases show now.
+	return <SwipeDeck onlineIds={onlineIds} room={room} userId={userId} />;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

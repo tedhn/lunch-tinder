@@ -14,6 +14,7 @@
 import type { NextRequest } from "next/server";
 import { env } from "~/env";
 import { db } from "~/server/db";
+import { fetchPhotoNames } from "~/server/places";
 
 /** Ten minutes. `openNow` flips on a boundary somewhere in every lunch hour,
  * and a card confidently saying "Open" at 14:45 is worse than saying nothing. */
@@ -25,6 +26,10 @@ export type PlaceDetails = {
 	openNow?: boolean;
 	address?: string;
 	hours?: string[];
+	/** How many slides the detail carousel should offer. The photos themselves
+	 * are pulled one at a time from /api/place-photo/[id]?n=, so this is a count
+	 * and not a list of URLs — those expire. */
+	photoCount: number;
 	/** Google requires these to be shown wherever their content is. */
 	attributions: string[];
 };
@@ -48,7 +53,11 @@ export async function GET(
 	const apiKey = env.GOOGLE_MAPS_API_KEY;
 	// No key configured is the documented default, not an error: the card falls
 	// back to what the seed file already knows.
-	if (!apiKey) return Response.json({ attributions: [] });
+	if (!apiKey)
+		return Response.json({
+			photoCount: 0,
+			attributions: [],
+		} satisfies PlaceDetails);
 
 	const cached = cache.get(id);
 	if (cached && cached.expiresAt > Date.now()) {
@@ -60,7 +69,11 @@ export async function GET(
 		select: { placeId: true },
 	});
 
-	if (!restaurant?.placeId) return Response.json({ attributions: [] });
+	if (!restaurant?.placeId)
+		return Response.json({
+			photoCount: 0,
+			attributions: [],
+		} satisfies PlaceDetails);
 
 	const response = await fetch(
 		`https://places.googleapis.com/v1/places/${encodeURIComponent(restaurant.placeId)}`,
@@ -86,7 +99,10 @@ export async function GET(
 			`Places details failed for ${id}: ${response.status} ${await response.text()}`,
 		);
 		// A soft failure: the sheet still opens on seed data alone.
-		return Response.json({ attributions: [] });
+		return Response.json({
+			photoCount: 0,
+			attributions: [],
+		} satisfies PlaceDetails);
 	}
 
 	const body = (await response.json()) as {
@@ -98,12 +114,17 @@ export async function GET(
 		attributions?: { provider?: string }[];
 	};
 
+	// Shares the photo route's cached name list, so opening a sheet for a card
+	// whose photo has already loaded adds no Places call at all.
+	const photoNames = await fetchPhotoNames(restaurant.placeId, apiKey);
+
 	const details: PlaceDetails = {
 		rating: body.rating,
 		ratingCount: body.userRatingCount,
 		openNow: body.currentOpeningHours?.openNow,
 		address: body.shortFormattedAddress,
 		hours: body.regularOpeningHours?.weekdayDescriptions,
+		photoCount: photoNames?.length ?? 0,
 		attributions: (body.attributions ?? [])
 			.map((a) => a.provider)
 			.filter((p): p is string => Boolean(p)),

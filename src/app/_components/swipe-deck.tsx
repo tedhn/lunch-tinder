@@ -1,5 +1,6 @@
 "use client";
 
+import { HeartIcon, XIcon } from "lucide-react";
 import {
 	AnimatePresence,
 	motion,
@@ -12,6 +13,29 @@ import { useEffect, useRef, useState } from "react";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
+import {
+	Carousel,
+	CarouselContent,
+	CarouselItem,
+	CarouselNext,
+	CarouselPrevious,
+} from "~/components/ui/carousel";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogFooter,
+	DialogTitle,
+} from "~/components/ui/dialog";
+import {
+	Drawer,
+	DrawerClose,
+	DrawerContent,
+	DrawerFooter,
+	DrawerTitle,
+} from "~/components/ui/drawer";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import { useMediaQuery } from "~/hooks/use-media-query";
 import { api, type RouterOutputs } from "~/trpc/react";
 
 type RoomState = RouterOutputs["room"]["state"];
@@ -49,9 +73,6 @@ export function SwipeDeck({
 	userId: string;
 	onlineIds: Set<string>;
 }) {
-	const swipe = api.room.swipe.useMutation();
-	const reveal = api.room.reveal.useMutation();
-
 	const me = room.members.find((m) => m.userId === userId);
 	const serverCount = me?.swipedCount ?? 0;
 
@@ -60,8 +81,28 @@ export function SwipeDeck({
 	// rather than silently skipped.
 	const [localCount, setLocalCount] = useState(serverCount);
 	const index = Math.max(localCount, serverCount);
+
+	const reveal = api.room.reveal.useMutation();
+	const swipe = api.room.swipe.useMutation({
+		// Transient failures are the common case on a phone walking out of an
+		// office, and the deck has already moved on by the time one happens.
+		retry: 2,
+		retryDelay: (attempt) => 400 * 2 ** attempt,
+		onError: () => {
+			// Without this the optimistic count keeps a card that the server never
+			// recorded: the swiper sees "that's your lot" at 20/20 while everyone
+			// else sees them stuck on 19/20, and the auto-reveal that fires from the
+			// last swipe never happens, so the whole room waits on a vote that does
+			// not exist. Dropping back to the server's number re-offers the card.
+			setLocalCount(serverCount);
+		},
+	});
 	const [exitDir, setExitDir] = useState(0);
+	// Two pieces of state rather than one nullable: the sheet has a closing
+	// animation, so its content has to outlive the close. `detailFor` therefore
+	// stays set after dismissal and is only replaced on the next open.
 	const [detailFor, setDetailFor] = useState<Place | null>(null);
+	const [detailOpen, setDetailOpen] = useState(false);
 
 	const stack = room.deck.slice(index, index + 3);
 	const top = stack[0];
@@ -77,11 +118,11 @@ export function SwipeDeck({
 		<main className="flex min-h-dvh flex-col px-5 py-6">
 			<div className="mx-auto flex w-full max-w-sm flex-1 flex-col">
 				<header className="mb-4">
-					<div className="mb-3 flex items-baseline justify-between">
-						<span className="font-mono text-muted-foreground text-xs tracking-widest">
-							{room.code}
-						</span>
-						<span className="text-muted-foreground text-xs">
+					<div className="mb-3 flex items-baseline justify-between gap-3">
+						{/* The room code doubles as the invite, now that there is no lobby
+						    screen to hold a share button. */}
+						<ShareCode code={room.code} />
+						<span className="shrink-0 text-muted-foreground text-xs">
 							{Math.min(index, room.deckSize)} / {room.deckSize}
 						</span>
 					</div>
@@ -94,6 +135,13 @@ export function SwipeDeck({
 							transition={{ type: "spring", stiffness: 200, damping: 30 }}
 						/>
 					</div>
+					{/* Said out loud rather than swallowed: the card is about to reappear,
+					    and a card coming back with no explanation reads as a bug. */}
+					{swipe.isError && (
+						<p className="mt-2 text-[11px] text-destructive">
+							That swipe did not save — here it is again.
+						</p>
+					)}
 					{others.length > 0 && (
 						<div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
 							{others.map((m) => (
@@ -133,7 +181,10 @@ export function SwipeDeck({
 								exitDir={exitDir}
 								key={top.id}
 								onDecide={(like) => decide(top, like)}
-								onOpen={() => setDetailFor(top)}
+								onOpen={() => {
+									setDetailFor(top);
+									setDetailOpen(true);
+								}}
 								place={top}
 							/>
 						) : null}
@@ -141,6 +192,7 @@ export function SwipeDeck({
 
 					{!top && (
 						<WaitingForOthers
+							isHost={room.hostId === userId}
 							onReveal={() => reveal.mutate({ code: room.code, userId })}
 							pending={reveal.isPending}
 							room={room}
@@ -152,37 +204,70 @@ export function SwipeDeck({
 					<div className="mt-6 flex items-center justify-center gap-6">
 						<Button
 							aria-label="Pass"
-							className="size-16 rounded-full border-2 text-2xl active:scale-90"
+							className="size-16 rounded-full border-2 active:scale-90"
 							onClick={() => decide(top, false)}
 							variant="outline"
 						>
-							✕
+							<XIcon className="size-7" />
 						</Button>
 						<Button
 							aria-label="Like"
-							className="size-20 rounded-full text-3xl active:scale-90"
+							className="size-20 rounded-full shadow-lg shadow-primary/30 active:scale-90"
 							onClick={() => decide(top, true)}
 						>
-							♥
+							<HeartIcon className="size-9 fill-current" />
 						</Button>
 					</div>
 				)}
 			</div>
 
-			<AnimatePresence>
-				{detailFor && (
-					<DetailSheet
-						onClose={() => setDetailFor(null)}
-						onDecide={(like) => {
-							const place = detailFor;
-							setDetailFor(null);
-							decide(place, like);
-						}}
-						place={detailFor}
-					/>
-				)}
-			</AnimatePresence>
+			{detailFor && (
+				<DetailSheet
+					onDecide={(like) => {
+						setDetailOpen(false);
+						if (detailFor) decide(detailFor, like);
+					}}
+					onOpenChange={setDetailOpen}
+					open={detailOpen}
+					place={detailFor}
+				/>
+			)}
 		</main>
+	);
+}
+
+/**
+ * The room code, and the way to hand it to someone. Native share on a phone,
+ * clipboard everywhere else — the same split the lobby used before the waiting
+ * room was removed.
+ */
+function ShareCode({ code }: { code: string }) {
+	const [copied, setCopied] = useState(false);
+
+	async function share() {
+		const url = window.location.href;
+		if (navigator.share) {
+			await navigator
+				.share({ title: "Lunch Tinder", text: `Room ${code}`, url })
+				.catch(() => undefined);
+			return;
+		}
+		await navigator.clipboard.writeText(url);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 1600);
+	}
+
+	return (
+		<Button
+			className="-ml-2 h-7 gap-2 rounded-full px-2 font-mono text-muted-foreground text-xs tracking-widest"
+			onClick={() => void share()}
+			variant="ghost"
+		>
+			{code}
+			<span className="font-sans tracking-normal">
+				{copied ? "copied" : "invite"}
+			</span>
+		</Button>
 	);
 }
 
@@ -384,11 +469,18 @@ type PlaceDetails = {
 	openNow?: boolean;
 	address?: string;
 	hours?: string[];
+	photoCount: number;
 	attributions: string[];
 };
 
 /**
- * Everything the card does not have room for, over the top of the deck.
+ * Everything the card does not have room for.
+ *
+ * Two presentations of the same content: a swipe-down Drawer on a phone, where
+ * the sheet coming up from the thumb matches how the deck is already being
+ * handled, and a centred Dialog on a desktop, where a bottom sheet on a 27"
+ * screen is a long way from the pointer. They are different components rather
+ * than one component with responsive classes, so the choice is made in JS.
  *
  * The seed fields render immediately; the Places fields arrive when they
  * arrive. That split is deliberate — the sheet is useful the instant it opens,
@@ -397,18 +489,23 @@ type PlaceDetails = {
  */
 function DetailSheet({
 	place,
-	onClose,
+	open,
+	onOpenChange,
 	onDecide,
 }: {
 	place: Place;
-	onClose: () => void;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
 	onDecide: (like: boolean) => void;
 }) {
 	const [details, setDetails] = useState<PlaceDetails | null>(null);
+	// Matches Tailwind's `sm`. Below it, the drawer; at or above, the dialog.
+	const isDesktop = useMediaQuery("(min-width: 640px)");
 
 	useEffect(() => {
-		// Nothing to ask Google about a place with no place ID.
-		if (place.placeId === null) return;
+		// Nothing to ask Google about a place with no place ID, and nothing to ask
+		// at all until the sheet is actually open — these calls are billed.
+		if (!open || place.placeId === null) return;
 
 		const aborted = new AbortController();
 		fetch(`/api/place-details/${place.id}`, { signal: aborted.signal })
@@ -417,194 +514,354 @@ function DetailSheet({
 			.catch(() => undefined);
 
 		return () => aborted.abort();
-	}, [place.id, place.placeId]);
+	}, [open, place.id, place.placeId]);
 
-	// Escape closes, because this is a modal and a laptop is a supported way to
-	// argue about lunch.
-	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [onClose]);
-
-	const hasPhoto = Boolean(place.imageUrl) || place.placeId !== null;
-
-	return (
-		<motion.div
-			animate={{ opacity: 1 }}
-			className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6"
-			exit={{ opacity: 0 }}
-			initial={{ opacity: 0 }}
-			onClick={onClose}
-		>
-			{/* Clicks inside the sheet must not reach the dismiss-on-backdrop
-			    handler above. Escape and the close button are the keyboard and
-			    assistive paths out. */}
-			<motion.div
-				animate={{ y: 0 }}
-				className="flex max-h-[85dvh] w-full max-w-sm flex-col overflow-hidden rounded-t-[28px] bg-card sm:rounded-[28px]"
-				exit={{ y: 40, opacity: 0 }}
-				initial={{ y: 40 }}
-				onClick={(e) => e.stopPropagation()}
-				transition={{ type: "spring", stiffness: 320, damping: 32 }}
+	// Both presentations share everything below the chrome. The name rides on the
+	// photo rather than sitting above the tabs: it is the one thing that must be
+	// readable before anything else has loaded, and putting it here buys the tabs
+	// the full width of the sheet.
+	const photo = (
+		<div className="relative shrink-0">
+			<DetailPhoto photoCount={details?.photoCount ?? 0} place={place} />
+			<div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-6 pt-16 pb-5">
+				<p className="font-semibold text-[--color-blush] text-xs uppercase tracking-widest">
+					{place.cuisine}
+				</p>
+				<h2 className="mt-1 font-black text-3xl text-white leading-tight">
+					{place.name}
+				</h2>
+			</div>
+		</div>
+	);
+	const body = <DetailBody details={details} place={place} />;
+	// Lucide rather than ✕ and ♥: the glyphs sit on different baselines in most
+	// fonts, so one label always looked a pixel lower than the other.
+	const actions = (
+		<div className="flex w-full gap-3">
+			<Button
+				className="h-13 flex-1 rounded-2xl text-base active:scale-[0.98]"
+				onClick={() => onDecide(false)}
+				variant="outline"
 			>
-				<div className="relative h-40 shrink-0 bg-[--color-ink]">
-					{hasPhoto ? (
-						// biome-ignore lint/performance/noImgElement: hosts are arbitrary
-						<img
-							alt=""
-							className="h-full w-full object-cover"
-							src={place.imageUrl ?? `/api/place-photo/${place.id}`}
-						/>
-					) : (
-						<div className="flex h-full items-center justify-center text-6xl">
-							{place.emoji}
-						</div>
-					)}
-					<Button
-						aria-label="Close"
-						className="absolute top-3 right-3 size-9 rounded-full bg-black/50 text-white hover:bg-black/70"
-						onClick={onClose}
-						variant="ghost"
-					>
-						✕
-					</Button>
-				</div>
+				<XIcon className="size-5" />
+				Pass
+			</Button>
+			<Button
+				className="h-13 flex-1 rounded-2xl text-base active:scale-[0.98]"
+				onClick={() => onDecide(true)}
+			>
+				<HeartIcon className="size-5 fill-current" />
+				Like
+			</Button>
+		</div>
+	);
 
-				{/* The one scrolling region. Opening hours are seven lines on their
-				    own, so the sheet has to give somewhere. */}
-				<div className="min-h-0 flex-1 overflow-y-auto p-6">
-					<p className="font-semibold text-[--color-rose-deep] text-xs uppercase tracking-widest">
-						{place.cuisine}
-					</p>
-					<h2 className="mt-1 font-black text-2xl leading-tight">
-						{place.name}
-					</h2>
-
-					<div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-sm">
-						<span>{"$".repeat(place.priceLevel)}</span>
-						<span>·</span>
-						<span>{place.walkMinutes} min walk</span>
-						{details?.rating !== undefined && (
-							<>
-								<span>·</span>
-								<span>
-									★ {details.rating.toFixed(1)}
-									{details.ratingCount !== undefined &&
-										` (${details.ratingCount})`}
-								</span>
-							</>
-						)}
-					</div>
-
-					{details?.openNow !== undefined && (
-						<Badge
-							className={`mt-3 font-semibold ${
-								details.openNow
-									? "bg-[--color-teal]/20 text-[--color-teal-deep]"
-									: "bg-destructive/10 text-destructive"
-							}`}
-						>
-							{details.openNow ? "Open now" : "Closed now"}
-						</Badge>
-					)}
-
-					{place.halal === true && (
-						<Badge className="mt-3 ml-2 bg-[--color-teal]/15 font-semibold text-[--color-teal-deep]">
-							☪ Halal
-						</Badge>
-					)}
-
-					{place.tags.length > 0 && (
-						<div className="mt-4 flex flex-wrap gap-1.5">
-							{place.tags.map((tag) => (
-								<Badge key={tag} variant="secondary">
-									{tag}
-								</Badge>
-							))}
-						</div>
-					)}
-
-					{details?.address && (
-						<p className="mt-4 text-muted-foreground text-sm">
-							{details.address}
-						</p>
-					)}
-
-					{details?.hours && details.hours.length > 0 && (
-						<div className="mt-4">
-							<p className="mb-1 font-semibold text-muted-foreground text-xs uppercase tracking-widest">
-								Hours
-							</p>
-							<ul className="space-y-0.5 text-muted-foreground text-sm">
-								{details.hours.map((line) => (
-									<li key={line}>{line}</li>
-								))}
-							</ul>
-						</div>
-					)}
-
-					{place.googleUrl && (
-						<Button
-							className="mt-5 h-12 w-full rounded-2xl bg-[--color-teal] font-bold text-[--color-ink] hover:bg-[--color-teal]/80"
-							// Base UI clones this element and supplies the label as
-							// children, so the anchor is written empty here.
+	if (isDesktop) {
+		return (
+			<Dialog onOpenChange={onOpenChange} open={open}>
+				{/* `p-0` and `gap-0` because the photo is full-bleed to the dialog's
+				    own rounded corners; padding is applied per-section instead. The
+				    built-in close button is replaced by one with a scrim, since the
+				    default's dark glyph lands on a photo. */}
+				<DialogContent
+					className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
+					showCloseButton={false}
+				>
+					<DialogTitle className="sr-only">{place.name}</DialogTitle>
+					<div className="relative shrink-0">
+						{photo}
+						<DialogClose
 							render={
-								<a
-									href={place.googleUrl}
-									rel="noreferrer noopener"
-									target="_blank"
+								<Button
+									aria-label="Close"
+									className="absolute top-3 right-3 z-10 size-9 rounded-full bg-black/50 text-white hover:bg-black/70"
+									variant="ghost"
 								/>
 							}
 						>
-							Open in Google Maps
-						</Button>
-					)}
+							✕
+						</DialogClose>
+					</div>
+					<div className="min-h-0 flex-1 overflow-y-auto p-6">{body}</div>
+					{/* `mx-0 mb-0` undoes the component's `-mx-4 -mb-4`, which assumes a
+					    dialog with `p-4` to bleed into. This one is `p-0`, so without
+					    that reset the footer hangs 16px outside the rounded corners and
+					    the Like button is clipped. */}
+					<DialogFooter className="mx-0 mb-0 border-t bg-card p-4">
+						{actions}
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		);
+	}
 
-					{/* Required wherever Google's place content is shown, and the
-					    third-party attributions with it when there are any. */}
-					{place.placeId !== null && (
-						<p className="mt-4 text-[11px] text-muted-foreground">
-							Powered by Google
-							{details?.attributions.length
-								? ` · ${details.attributions.join(", ")}`
-								: ""}
-						</p>
+	return (
+		// `showSwipeHandle` earns its place here: the drawer is dismissed with the
+		// same downward flick the deck has trained the thumb to make.
+		<Drawer onOpenChange={onOpenChange} open={open} showSwipeHandle>
+			<DrawerContent className="max-h-[85dvh]">
+				<DrawerTitle className="sr-only">{place.name}</DrawerTitle>
+				<div className="relative shrink-0">
+					{photo}
+					<DrawerClose
+						render={
+							<Button
+								aria-label="Close"
+								className="absolute top-3 right-3 z-10 size-9 rounded-full bg-black/50 text-white hover:bg-black/70"
+								variant="ghost"
+							/>
+						}
+					>
+						✕
+					</DrawerClose>
+				</div>
+				<div className="min-h-0 flex-1 overflow-y-auto p-6">{body}</div>
+				{/* The extra bottom padding clears a phone's home indicator, which
+				    otherwise sits on top of the buttons. */}
+				<DrawerFooter className="border-t bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+					{actions}
+				</DrawerFooter>
+			</DrawerContent>
+		</Drawer>
+	);
+}
+
+/**
+ * The header: a carousel of the place's Google photos, or the emoji when there
+ * are none.
+ *
+ * Slides are `<img src=".../place-photo/id?n=2">` rather than a list of URLs
+ * fetched up front, for two reasons. Google's photo URLs are signed and expire,
+ * so they cannot be held; and each one is a billed call, so a slide nobody
+ * swipes to should not cost anything. Lazy loading on all but the first is what
+ * makes that true.
+ */
+function DetailPhoto({
+	place,
+	photoCount,
+}: {
+	place: Place;
+	photoCount: number;
+}) {
+	// `photoCount` arrives with the Places response, a moment after the sheet
+	// opens. Until then show the one photo the card was already showing, so the
+	// header never starts empty and then jumps.
+	const slides = place.imageUrl
+		? null
+		: Array.from({ length: Math.max(photoCount, 1) }, (_, i) => i);
+	const hasPhoto = Boolean(place.imageUrl) || place.placeId !== null;
+
+	if (!hasPhoto) {
+		return (
+			<div className="flex h-80 shrink-0 items-center justify-center bg-[--color-ink] text-8xl sm:h-96">
+				{place.emoji}
+			</div>
+		);
+	}
+
+	// A single photo does not need a carousel's controls or its dots.
+	if (!slides || slides.length === 1) {
+		return (
+			<div className="h-80 shrink-0 bg-[--color-ink] sm:h-96">
+				{/* biome-ignore lint/performance/noImgElement: hosts are arbitrary */}
+				<img
+					alt=""
+					className="h-full w-full object-cover"
+					src={place.imageUrl ?? `/api/place-photo/${place.id}`}
+				/>
+			</div>
+		);
+	}
+
+	return (
+		<Carousel
+			className="h-80 shrink-0 bg-[--color-ink] sm:h-96"
+			opts={{ loop: true }}
+		>
+			{/* `-ml-4`/`pl-4` is the component's default gutter, undone here: these
+			    are full-bleed photos, not cards in a row. */}
+			<CarouselContent className="ml-0 h-80 sm:h-96">
+				{slides.map((n) => (
+					<CarouselItem className="h-80 pl-0 sm:h-96" key={n}>
+						{/* biome-ignore lint/performance/noImgElement: hosts are arbitrary */}
+						<img
+							alt=""
+							className="h-full w-full object-cover"
+							loading={n === 0 ? "eager" : "lazy"}
+							src={`/api/place-photo/${place.id}?n=${n}`}
+						/>
+					</CarouselItem>
+				))}
+			</CarouselContent>
+			<CarouselPrevious className="left-3 border-0 bg-black/50 text-white hover:bg-black/70 hover:text-white" />
+			<CarouselNext className="right-3 border-0 bg-black/50 text-white hover:bg-black/70 hover:text-white" />
+			{/* Top-left, not bottom-centre: the name sits over the bottom of the
+			    photo now. */}
+			<span className="absolute top-3 left-3 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white/80">
+				{slides.length} photos
+			</span>
+		</Carousel>
+	);
+}
+
+/**
+ * The scrolling part, split into tabs.
+ *
+ * Hours and Location are their own tabs rather than more of one long column
+ * because they answer different questions — "can we still go" and "where is it"
+ * — and because seven lines of opening hours pushed everything else off a phone
+ * screen. Name and cuisine are not here at all; they sit over the photo.
+ *
+ * A tab appears only when it has something in it. `details` lands a moment after
+ * the sheet opens, and a place with no place ID never gets any, so this is often
+ * just the one Overview tab with no tab bar at all.
+ */
+function DetailBody({
+	place,
+	details,
+}: {
+	place: Place;
+	details: PlaceDetails | null;
+}) {
+	const hasHours = Boolean(details?.hours?.length);
+	const hasLocation = Boolean(details?.address);
+
+	return (
+		<Tabs defaultValue="overview">
+			{(hasHours || hasLocation) && (
+				<TabsList className="w-full">
+					<TabsTrigger value="overview">Overview</TabsTrigger>
+					{hasHours && <TabsTrigger value="hours">Hours</TabsTrigger>}
+					{hasLocation && <TabsTrigger value="location">Location</TabsTrigger>}
+				</TabsList>
+			)}
+
+			<TabsContent className="pt-3" value="overview">
+				<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-sm">
+					<span>{"$".repeat(place.priceLevel)}</span>
+					<span>·</span>
+					<span>{place.walkMinutes} min walk</span>
+					{details?.rating !== undefined && (
+						<>
+							<span>·</span>
+							<span>
+								★ {details.rating.toFixed(1)}
+								{details.ratingCount !== undefined &&
+									` (${details.ratingCount})`}
+							</span>
+						</>
 					)}
 				</div>
 
-				<div className="flex shrink-0 gap-3 border-t p-4">
-					<Button
-						className="h-12 flex-1 rounded-2xl"
-						onClick={() => onDecide(false)}
-						variant="outline"
-					>
-						✕ Pass
-					</Button>
-					<Button
-						className="h-12 flex-1 rounded-2xl font-bold"
-						onClick={() => onDecide(true)}
-					>
-						♥ Like
-					</Button>
-				</div>
-			</motion.div>
-		</motion.div>
+				{(details?.openNow !== undefined || place.halal === true) && (
+					<div className="mt-3 flex flex-wrap gap-2">
+						{details?.openNow !== undefined && (
+							<Badge
+								className={`font-semibold ${
+									details.openNow
+										? "bg-[--color-teal]/20 text-[--color-teal-deep]"
+										: "bg-destructive/10 text-destructive"
+								}`}
+							>
+								{details.openNow ? "Open now" : "Closed now"}
+							</Badge>
+						)}
+						{place.halal === true && (
+							<Badge className="bg-[--color-teal]/15 font-semibold text-[--color-teal-deep]">
+								☪ Halal
+							</Badge>
+						)}
+					</div>
+				)}
+
+				{place.tags.length > 0 && (
+					<div className="mt-4 flex flex-wrap gap-1.5">
+						{place.tags.map((tag) => (
+							<Badge key={tag} variant="secondary">
+								{tag}
+							</Badge>
+						))}
+					</div>
+				)}
+
+				<MapsLink place={place} />
+				<Attribution details={details} place={place} />
+			</TabsContent>
+
+			{hasHours && (
+				<TabsContent className="pt-3" value="hours">
+					<ul className="space-y-1 text-muted-foreground text-sm">
+						{details?.hours?.map((line) => (
+							<li key={line}>{line}</li>
+						))}
+					</ul>
+					<Attribution details={details} place={place} />
+				</TabsContent>
+			)}
+
+			{hasLocation && (
+				<TabsContent className="pt-3" value="location">
+					<p className="text-muted-foreground text-sm">{details?.address}</p>
+					<MapsLink place={place} />
+					<Attribution details={details} place={place} />
+				</TabsContent>
+			)}
+		</Tabs>
+	);
+}
+
+function MapsLink({ place }: { place: Place }) {
+	if (!place.googleUrl) return null;
+
+	return (
+		<Button
+			className="mt-5 h-12 w-full rounded-2xl bg-[--color-teal] font-bold text-[--color-ink] hover:bg-[--color-teal]/80"
+			// Base UI clones this element and supplies the label as children, so the
+			// anchor is written empty here.
+			render={
+				<a href={place.googleUrl} rel="noreferrer noopener" target="_blank" />
+			}
+		>
+			Open in Google Maps
+		</Button>
+	);
+}
+
+/** Required wherever Google's place content is shown, and the third-party
+ * attributions with it when there are any. Per-tab, because each tab is showing
+ * that content in its own right. */
+function Attribution({
+	place,
+	details,
+}: {
+	place: Place;
+	details: PlaceDetails | null;
+}) {
+	if (place.placeId === null) return null;
+
+	return (
+		<p className="mt-4 text-[11px] text-muted-foreground">
+			Powered by Google
+			{details?.attributions.length
+				? ` · ${details.attributions.join(", ")}`
+				: ""}
+		</p>
 	);
 }
 
 function WaitingForOthers({
 	room,
 	pending,
+	isHost,
 	onReveal,
 }: {
 	room: RoomState;
 	pending: boolean;
+	isHost: boolean;
 	onReveal: () => void;
 }) {
 	const waiting = room.members.filter((m) => !m.done);
+	const host = room.members.find((m) => m.userId === room.hostId);
 
 	return (
 		<div className="flex h-full flex-col items-center justify-center text-center">
@@ -621,16 +878,26 @@ function WaitingForOthers({
 					? "Counting the votes…"
 					: `Waiting on ${waiting.map((m) => m.name).join(", ")}`}
 			</p>
-			{waiting.length > 0 && (
-				<Button
-					className="mt-8 h-12 rounded-2xl px-5 font-bold active:scale-95"
-					disabled={pending}
-					onClick={onReveal}
-					variant="outline"
-				>
-					{pending ? "Revealing…" : "Reveal without them"}
-				</Button>
-			)}
+			{/* Ending the round early throws away votes not yet cast, so it belongs
+			    to whoever opened the room. Everyone else is told who that is rather
+			    than shown a button that would only return a 403. */}
+			{waiting.length > 0 &&
+				(isHost ? (
+					<Button
+						className="mt-8 h-12 rounded-2xl px-5 font-bold active:scale-95"
+						disabled={pending}
+						onClick={onReveal}
+						variant="outline"
+					>
+						{pending ? "Revealing…" : "Reveal without them"}
+					</Button>
+				) : (
+					<p className="mt-8 max-w-[15rem] text-muted-foreground text-xs">
+						{host
+							? `${host.name} started this room and can end the round early.`
+							: "The round ends once everyone has finished."}
+					</p>
+				))}
 		</div>
 	);
 }

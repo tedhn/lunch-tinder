@@ -34,18 +34,25 @@
 	--color-teal-deep: #2c6e68;
 }
 
-html,
-body {
-	height: 100%;
+html {
+	/* The page colour lives here, not only on body: on a results page long
+	   enough to scroll, a body-only background ends with the body box and leaves
+	   a hard seam where the gradient stops. */
+	background: var(--color-cream);
+	min-height: 100%;
 }
 
 body {
 	/* Blush at the top fading into cream — the two warm ends of the palette,
-	   with teal held back for success states so it stays meaningful. */
+	   with teal held back for success states so it stays meaningful.
+	   `fixed` pins it to the viewport rather than the document, so the fade
+	   stays put while a long list scrolls under it instead of tiling. */
 	background:
-		radial-gradient(120% 80% at 50% 0%, var(--color-blush) 0%, transparent 55%),
+		radial-gradient(120% 80% at 50% 0%, var(--color-blush) 0%, transparent 55%)
+		no-repeat fixed,
 		var(--color-cream);
 	color: var(--color-ink);
+	min-height: 100%;
 	-webkit-tap-highlight-color: transparent;
 }
 

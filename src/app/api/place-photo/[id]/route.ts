@@ -13,16 +13,22 @@
  * matters: both are billed per request, and a room of six people all opening
  * the same 20-card deck would otherwise be 240 paid calls for 20 photos.
  *
+ * `?n=` picks a photo by index, which is what the detail carousel walks. The
+ * resource names for a place come from one Details call and are cached together,
+ * so a carousel of five costs one Details call and five Photos calls, not five
+ * of each.
+ *
  * The API key never leaves the server. It is billable, and a key in the browser
  * is a key on someone else's bill.
  */
 import type { NextRequest } from "next/server";
 import { env } from "~/env";
 import { db } from "~/server/db";
-
-/** Google's photo URLs are signed and expire; an hour is comfortably inside
- * that, and also inside the 30-day cap on caching place content. */
-const CACHE_TTL_MS = 60 * 60 * 1000;
+import {
+	fetchPhotoNames,
+	MAX_PHOTOS,
+	PHOTO_CACHE_TTL_MS,
+} from "~/server/places";
 
 /** Tall enough for a full-bleed card on a phone at 2x without paying for a
  * resolution nobody sees. */
@@ -38,34 +44,16 @@ const cache = globalForPhotos.placePhotoCache ?? new Map<string, CacheEntry>();
 globalForPhotos.placePhotoCache = cache;
 
 /**
- * A place's first photo, as a URL that the browser can load directly.
- * Returns null when the place has no photos, which is common for small shops.
+ * One photo of a place, as a URL the browser can load directly.
+ * Returns null when the place has no photo at that index.
  */
 async function fetchPhotoUrl(
 	placeId: string,
+	index: number,
 	apiKey: string,
 ): Promise<string | null> {
-	const details = await fetch(
-		`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
-		{
-			headers: {
-				"X-Goog-Api-Key": apiKey,
-				"X-Goog-FieldMask": "photos",
-			},
-		},
-	);
-
-	if (!details.ok) {
-		console.error(
-			`Places details failed for ${placeId}: ${details.status} ${await details.text()}`,
-		);
-		return null;
-	}
-
-	const { photos } = (await details.json()) as {
-		photos?: { name: string }[];
-	};
-	const photoName = photos?.[0]?.name;
+	const names = await fetchPhotoNames(placeId, apiKey);
+	const photoName = names?.[index];
 	if (!photoName) return null;
 
 	// `skipHttpRedirect` asks for the URL as JSON instead of a 302 to the image,
@@ -88,17 +76,26 @@ async function fetchPhotoUrl(
 }
 
 export async function GET(
-	_request: NextRequest,
+	request: NextRequest,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
 	const { id } = await params;
+
+	// `?n=` is the carousel's slide index. Anything unparseable is photo 0, which
+	// is what a card asks for.
+	const requested = Number(request.nextUrl.searchParams.get("n"));
+	const index =
+		Number.isInteger(requested) && requested >= 0 && requested < MAX_PHOTOS
+			? requested
+			: 0;
 
 	const apiKey = env.GOOGLE_MAPS_API_KEY;
 	// No key configured is the documented default, not an error: the card just
 	// keeps showing its emoji.
 	if (!apiKey) return new Response(null, { status: 404 });
 
-	const cached = cache.get(id);
+	const cacheKey = `${id}:${index}`;
+	const cached = cache.get(cacheKey);
 	if (cached && cached.expiresAt > Date.now()) {
 		return Response.redirect(cached.url, 307);
 	}
@@ -114,11 +111,11 @@ export async function GET(
 	// on the first error and stays on the emoji for the rest of that mount, so a
 	// momentary empty response from Places costs the photo for a whole round.
 	const url =
-		(await fetchPhotoUrl(restaurant.placeId, apiKey)) ??
-		(await fetchPhotoUrl(restaurant.placeId, apiKey));
+		(await fetchPhotoUrl(restaurant.placeId, index, apiKey)) ??
+		(await fetchPhotoUrl(restaurant.placeId, index, apiKey));
 	if (!url) return new Response(null, { status: 404 });
 
-	cache.set(id, { url, expiresAt: Date.now() + CACHE_TTL_MS });
+	cache.set(cacheKey, { url, expiresAt: Date.now() + PHOTO_CACHE_TTL_MS });
 
 	// 307 rather than 308: the target URL expires, so nothing downstream should
 	// treat this mapping as permanent.
