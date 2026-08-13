@@ -7,7 +7,7 @@ import {
 	useMotionValue,
 	useTransform,
 } from "motion/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -20,6 +20,10 @@ type Place = RoomState["deck"][number];
 /** Past this, letting go decides the card; below it, the card springs back. */
 const COMMIT_PX = 110;
 const COMMIT_VELOCITY = 550;
+
+/** Pointer travel, in px, still counted as a tap rather than a small drag. A
+ * thumb never lands perfectly still, so zero would make the card feel dead. */
+const TAP_SLOP = 8;
 
 /**
  * A dynamic `exit` has to live in `variants` — that is the only form motion
@@ -57,6 +61,7 @@ export function SwipeDeck({
 	const [localCount, setLocalCount] = useState(serverCount);
 	const index = Math.max(localCount, serverCount);
 	const [exitDir, setExitDir] = useState(0);
+	const [detailFor, setDetailFor] = useState<Place | null>(null);
 
 	const stack = room.deck.slice(index, index + 3);
 	const top = stack[0];
@@ -128,6 +133,7 @@ export function SwipeDeck({
 								exitDir={exitDir}
 								key={top.id}
 								onDecide={(like) => decide(top, like)}
+								onOpen={() => setDetailFor(top)}
 								place={top}
 							/>
 						) : null}
@@ -162,6 +168,20 @@ export function SwipeDeck({
 					</div>
 				)}
 			</div>
+
+			<AnimatePresence>
+				{detailFor && (
+					<DetailSheet
+						onClose={() => setDetailFor(null)}
+						onDecide={(like) => {
+							const place = detailFor;
+							setDetailFor(null);
+							decide(place, like);
+						}}
+						place={detailFor}
+					/>
+				)}
+			</AnimatePresence>
 		</main>
 	);
 }
@@ -170,17 +190,27 @@ function TopCard({
 	place,
 	exitDir,
 	onDecide,
+	onOpen,
 }: {
 	place: Place;
 	exitDir: number;
 	onDecide: (like: boolean) => void;
+	onOpen: () => void;
 }) {
 	const x = useMotionValue(0);
 	const rotate = useTransform(x, [-240, 240], [-16, 16]);
 	const likeOpacity = useTransform(x, [40, 130], [0, 1]);
 	const passOpacity = useTransform(x, [-130, -40], [1, 0]);
 
+	// `onTap` fires at the end of a drag as well as on a genuine tap, so a swipe
+	// that springs back would otherwise open the sheet. This records whether the
+	// pointer travelled, and clears on the next press rather than on a timer.
+	const draggedRef = useRef(false);
+
 	function handleDragEnd(_: unknown, info: PanInfo) {
+		draggedRef.current =
+			Math.abs(info.offset.x) > TAP_SLOP || Math.abs(info.offset.y) > TAP_SLOP;
+
 		const committed =
 			Math.abs(info.offset.x) > COMMIT_PX ||
 			Math.abs(info.velocity.x) > COMMIT_VELOCITY;
@@ -199,18 +229,24 @@ function TopCard({
 			exit="exit"
 			initial="enter"
 			onDragEnd={handleDragEnd}
+			onTap={() => {
+				if (!draggedRef.current) onOpen();
+			}}
+			onTapStart={() => {
+				draggedRef.current = false;
+			}}
 			style={{ x, rotate }}
 			variants={CARD_VARIANTS}
 		>
-			<CardFace place={place}>
+			<CardFace place={place} tappable>
 				<motion.span
-					className="absolute top-6 left-6 rotate-[-12deg] rounded-xl border-4 border-[--color-teal-deep] px-3 py-1 font-black text-2xl text-[--color-teal-deep]"
+					className="absolute top-20 left-6 rotate-[-12deg] rounded-xl border-4 border-[--color-teal-deep] px-3 py-1 font-black text-2xl text-[--color-teal-deep]"
 					style={{ opacity: likeOpacity }}
 				>
 					YES
 				</motion.span>
 				<motion.span
-					className="absolute top-6 right-6 rotate-[12deg] rounded-xl border-4 border-foreground/40 px-3 py-1 font-black text-2xl text-foreground/40"
+					className="absolute top-20 right-6 rotate-[12deg] rounded-xl border-4 border-foreground/40 px-3 py-1 font-black text-2xl text-foreground/40"
 					style={{ opacity: passOpacity }}
 				>
 					NAH
@@ -222,9 +258,11 @@ function TopCard({
 
 function CardFace({
 	place,
+	tappable,
 	children,
 }: {
 	place: Place;
+	tappable?: boolean;
 	children?: React.ReactNode;
 }) {
 	// Own image first, then Google's, then the emoji. `broken` collapses the
@@ -275,6 +313,21 @@ function CardFace({
 				</span>
 			)}
 
+			{/* A tap target with no affordance is a tap target nobody finds. Only
+			    the top card is interactive, which is why this is passed in rather
+			    than assumed. */}
+			{tappable && (
+				<span
+					className={`absolute top-4 left-4 rounded-full px-2.5 py-1 text-[11px] ${
+						hasPhoto
+							? "bg-black/50 text-white/80"
+							: "bg-muted text-foreground/70"
+					}`}
+				>
+					Tap for details
+				</span>
+			)}
+
 			<div className="relative">
 				<p
 					className={`font-semibold text-xs uppercase tracking-widest ${
@@ -322,6 +375,223 @@ function CardFace({
 
 			{children}
 		</Card>
+	);
+}
+
+type PlaceDetails = {
+	rating?: number;
+	ratingCount?: number;
+	openNow?: boolean;
+	address?: string;
+	hours?: string[];
+	attributions: string[];
+};
+
+/**
+ * Everything the card does not have room for, over the top of the deck.
+ *
+ * The seed fields render immediately; the Places fields arrive when they
+ * arrive. That split is deliberate — the sheet is useful the instant it opens,
+ * and a rating fading in a moment later costs nothing, whereas a spinner in
+ * front of the name would.
+ */
+function DetailSheet({
+	place,
+	onClose,
+	onDecide,
+}: {
+	place: Place;
+	onClose: () => void;
+	onDecide: (like: boolean) => void;
+}) {
+	const [details, setDetails] = useState<PlaceDetails | null>(null);
+
+	useEffect(() => {
+		// Nothing to ask Google about a place with no place ID.
+		if (place.placeId === null) return;
+
+		const aborted = new AbortController();
+		fetch(`/api/place-details/${place.id}`, { signal: aborted.signal })
+			.then((r) => (r.ok ? (r.json() as Promise<PlaceDetails>) : null))
+			.then((d) => d && setDetails(d))
+			.catch(() => undefined);
+
+		return () => aborted.abort();
+	}, [place.id, place.placeId]);
+
+	// Escape closes, because this is a modal and a laptop is a supported way to
+	// argue about lunch.
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onClose();
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [onClose]);
+
+	const hasPhoto = Boolean(place.imageUrl) || place.placeId !== null;
+
+	return (
+		<motion.div
+			animate={{ opacity: 1 }}
+			className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6"
+			exit={{ opacity: 0 }}
+			initial={{ opacity: 0 }}
+			onClick={onClose}
+		>
+			{/* Clicks inside the sheet must not reach the dismiss-on-backdrop
+			    handler above. Escape and the close button are the keyboard and
+			    assistive paths out. */}
+			<motion.div
+				animate={{ y: 0 }}
+				className="flex max-h-[85dvh] w-full max-w-sm flex-col overflow-hidden rounded-t-[28px] bg-card sm:rounded-[28px]"
+				exit={{ y: 40, opacity: 0 }}
+				initial={{ y: 40 }}
+				onClick={(e) => e.stopPropagation()}
+				transition={{ type: "spring", stiffness: 320, damping: 32 }}
+			>
+				<div className="relative h-40 shrink-0 bg-[--color-ink]">
+					{hasPhoto ? (
+						// biome-ignore lint/performance/noImgElement: hosts are arbitrary
+						<img
+							alt=""
+							className="h-full w-full object-cover"
+							src={place.imageUrl ?? `/api/place-photo/${place.id}`}
+						/>
+					) : (
+						<div className="flex h-full items-center justify-center text-6xl">
+							{place.emoji}
+						</div>
+					)}
+					<Button
+						aria-label="Close"
+						className="absolute top-3 right-3 size-9 rounded-full bg-black/50 text-white hover:bg-black/70"
+						onClick={onClose}
+						variant="ghost"
+					>
+						✕
+					</Button>
+				</div>
+
+				{/* The one scrolling region. Opening hours are seven lines on their
+				    own, so the sheet has to give somewhere. */}
+				<div className="min-h-0 flex-1 overflow-y-auto p-6">
+					<p className="font-semibold text-[--color-rose-deep] text-xs uppercase tracking-widest">
+						{place.cuisine}
+					</p>
+					<h2 className="mt-1 font-black text-2xl leading-tight">
+						{place.name}
+					</h2>
+
+					<div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-sm">
+						<span>{"$".repeat(place.priceLevel)}</span>
+						<span>·</span>
+						<span>{place.walkMinutes} min walk</span>
+						{details?.rating !== undefined && (
+							<>
+								<span>·</span>
+								<span>
+									★ {details.rating.toFixed(1)}
+									{details.ratingCount !== undefined &&
+										` (${details.ratingCount})`}
+								</span>
+							</>
+						)}
+					</div>
+
+					{details?.openNow !== undefined && (
+						<Badge
+							className={`mt-3 font-semibold ${
+								details.openNow
+									? "bg-[--color-teal]/20 text-[--color-teal-deep]"
+									: "bg-destructive/10 text-destructive"
+							}`}
+						>
+							{details.openNow ? "Open now" : "Closed now"}
+						</Badge>
+					)}
+
+					{place.halal === true && (
+						<Badge className="mt-3 ml-2 bg-[--color-teal]/15 font-semibold text-[--color-teal-deep]">
+							☪ Halal
+						</Badge>
+					)}
+
+					{place.tags.length > 0 && (
+						<div className="mt-4 flex flex-wrap gap-1.5">
+							{place.tags.map((tag) => (
+								<Badge key={tag} variant="secondary">
+									{tag}
+								</Badge>
+							))}
+						</div>
+					)}
+
+					{details?.address && (
+						<p className="mt-4 text-muted-foreground text-sm">
+							{details.address}
+						</p>
+					)}
+
+					{details?.hours && details.hours.length > 0 && (
+						<div className="mt-4">
+							<p className="mb-1 font-semibold text-muted-foreground text-xs uppercase tracking-widest">
+								Hours
+							</p>
+							<ul className="space-y-0.5 text-muted-foreground text-sm">
+								{details.hours.map((line) => (
+									<li key={line}>{line}</li>
+								))}
+							</ul>
+						</div>
+					)}
+
+					{place.googleUrl && (
+						<Button
+							className="mt-5 h-12 w-full rounded-2xl bg-[--color-teal] font-bold text-[--color-ink] hover:bg-[--color-teal]/80"
+							// Base UI clones this element and supplies the label as
+							// children, so the anchor is written empty here.
+							render={
+								<a
+									href={place.googleUrl}
+									rel="noreferrer noopener"
+									target="_blank"
+								/>
+							}
+						>
+							Open in Google Maps
+						</Button>
+					)}
+
+					{/* Required wherever Google's place content is shown, and the
+					    third-party attributions with it when there are any. */}
+					{place.placeId !== null && (
+						<p className="mt-4 text-[11px] text-muted-foreground">
+							Powered by Google
+							{details?.attributions.length
+								? ` · ${details.attributions.join(", ")}`
+								: ""}
+						</p>
+					)}
+				</div>
+
+				<div className="flex shrink-0 gap-3 border-t p-4">
+					<Button
+						className="h-12 flex-1 rounded-2xl"
+						onClick={() => onDecide(false)}
+						variant="outline"
+					>
+						✕ Pass
+					</Button>
+					<Button
+						className="h-12 flex-1 rounded-2xl font-bold"
+						onClick={() => onDecide(true)}
+					>
+						♥ Like
+					</Button>
+				</div>
+			</motion.div>
+		</motion.div>
 	);
 }
 
