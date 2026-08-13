@@ -1,0 +1,118 @@
+// Lunch Tinder schema.
+//
+// Rooms are ephemeral: a lunch decision does not outlive lunch. Everything here
+// is safe to sweep a few hours after `last_activity`.
+//
+// Tables and columns are explicitly mapped to snake_case. Supabase Realtime
+// filters and RLS policies are written against raw Postgres names, and
+// unquoted identifiers there fold to lowercase — camelCase columns would need
+// quoting in every filter string.
+
+generator client {
+    provider = "prisma-client-js"
+    output   = "../generated/prisma"
+}
+
+datasource db {
+    provider  = "postgresql"
+    // Pooled connection (Supabase pgBouncer, port 6543) for the app itself.
+    url       = env("DATABASE_URL")
+    // Direct connection (port 5432) — migrations cannot run through a pooler.
+    directUrl = env("DIRECT_URL")
+}
+
+/// A curated lunch spot. This table is the deck source; `googleUrl` is only
+/// ever a deep link out to Google Maps once a room has decided.
+model Restaurant {
+    id          String   @id
+    name        String
+    cuisine     String
+    emoji       String
+    priceLevel  Int      @default(1) @map("price_level")
+    walkMinutes Int      @default(10) @map("walk_minutes")
+    tags        String[] @default([])
+    /// Halal status, and deliberately nullable: `null` means "not verified",
+    /// not "not halal". Only set this true for a shop whose certification or
+    /// signage you have actually seen — a wrong `true` here sends someone to
+    /// food they cannot eat, which is worse than showing no badge at all.
+    halal       Boolean?
+    /// Your own image, if you have one. Never a Google place photo: Maps
+    /// Platform terms forbid copying place photos into your own storage. Those
+    /// are served live through /api/place-photo/[id] instead, from `placeId`.
+    imageUrl    String?  @map("image_url")
+    /// Google place ID. The one piece of Google place data that may be stored
+    /// indefinitely — everything else fetched from Places is capped at 30 days
+    /// of caching, which is why nothing else from Google lands in this table.
+    placeId     String?  @map("place_id")
+    /// Google Maps link. Built from `name` alone, or pinned exactly when a
+    /// Google place ID is known — see googleMapsUrl in prisma/seed.ts.
+    googleUrl   String?  @map("google_url")
+    /// Soft-delete so a closed shop stops appearing without losing past rooms.
+    active      Boolean  @default(true)
+    createdAt   DateTime @default(now()) @map("created_at")
+
+    @@index([active])
+    @@map("restaurant")
+}
+
+model Room {
+    code String @id
+
+    /// Whoever created the room. Shown as a badge in the lobby; it grants no
+    /// extra powers, so a host whose phone dies cannot strand everyone else.
+    hostId String @default("") @map("host_id")
+
+    /// "lobby" | "swiping" | "results" — see RoomPhase in src/server/lunch/types.ts.
+    phase String @default("lobby")
+
+    /// Deck order is frozen at creation and shared by every member, so the
+    /// "3 of 5 finished" progress counts refer to the same cards for everyone.
+    deckIds String[] @default([]) @map("deck_ids")
+
+    createdAt    DateTime @default(now()) @map("created_at")
+    lastActivity DateTime @default(now()) @map("last_activity")
+
+    members Member[]
+    swipes  Swipe[]
+
+    @@index([lastActivity])
+    @@map("room")
+}
+
+model Member {
+    id       String @id @default(uuid())
+    roomCode String @map("room_code")
+    /// Anonymous, client-generated and persisted in localStorage. A phone that
+    /// locks and reconnects resumes as the same member rather than appearing twice.
+    userId   String @map("user_id")
+    name     String
+
+    /// Denormalised count of this member's swipes. Broadcast to everyone via
+    /// Realtime; the individual Swipe rows are never exposed to clients.
+    swipedCount Int @default(0) @map("swiped_count")
+
+    joinedAt DateTime @default(now()) @map("joined_at")
+
+    room Room @relation(fields: [roomCode], references: [code], onDelete: Cascade)
+
+    @@unique([roomCode, userId])
+    @@index([roomCode])
+    @@map("member")
+}
+
+/// One member's verdict on one card. Unique on (room, user, restaurant) so a
+/// double-tap or a retried request cannot inflate a tally.
+model Swipe {
+    id           String   @id @default(uuid())
+    roomCode     String   @map("room_code")
+    userId       String   @map("user_id")
+    restaurantId String   @map("restaurant_id")
+    like         Boolean
+    createdAt    DateTime @default(now()) @map("created_at")
+
+    room Room @relation(fields: [roomCode], references: [code], onDelete: Cascade)
+
+    @@unique([roomCode, userId, restaurantId])
+    @@index([roomCode])
+    @@map("swipe")
+}
